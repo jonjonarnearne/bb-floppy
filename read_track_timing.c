@@ -55,14 +55,14 @@ static int find_std_sector_headers(const uint16_t *timing, int sample_count,
 	c = count;
         cur_sector = raw_mfm_sectors;
 	for(i=0; i < sample_count; i++) {
-		if (timing[i] > 230) {
+		if (timing[i] > 720) {
 			shift(cur_sector, sizeof(*cur_sector), 0);
 			if (check_sync(cur_sector)) {
 				if (!--count) break;
                                 cur_sector++;
                         }
 		}
-		if (timing[i] > 160) {
+		if (timing[i] > 540) {
 			shift(cur_sector, sizeof(*cur_sector), 0);
 			if (check_sync(cur_sector)) {
 				if (!--count) break;
@@ -153,31 +153,35 @@ static void measure_samples(const uint16_t * samples, int sample_count)
 
         for(i=0; i<sample_count; i++) {
 		total_time += samples[i];
+                if (samples[i] < 300) {
+                        // DISCARD
+                        continue;
+                        
 		// 01 
-                if (samples[i] < 107) {
+                } else if (samples[i] < 385) {
                         brackets[0] += samples[i];
                         bracket_count[0]++;
-                } else if (samples[i] < 115) {
+                } else if (samples[i] < 405) {
                         brackets[1] += samples[i];
                         bracket_count[1]++;
-                } else if (samples[i] < 140) {
+                } else if (samples[i] < 440) {
                         brackets[2] += samples[i];
                         bracket_count[2]++;
 		// 001
-                } else if (samples[i] < 175) {
+                } else if (samples[i] < 585) {
                         brackets[3] += samples[i];
                         bracket_count[3]++;
-                } else if (samples[i] < 185) {
+                } else if (samples[i] < 610) {
                         brackets[4] += samples[i];
                         bracket_count[4]++;
-                } else if (samples[i] < 200) {
+                } else if (samples[i] < 660) {
                         brackets[5] += samples[i];
                         bracket_count[5]++;
 		// 0001
-                } else if (samples[i] < 235) {
+                } else if (samples[i] < 780) {
                         brackets[6] += samples[i];
                         bracket_count[6]++;
-                } else if (samples[i] < 255) {
+                } else if (samples[i] < 820) {
                         brackets[7] += samples[i];
                         bracket_count[7]++;
                 } else {
@@ -188,40 +192,38 @@ static void measure_samples(const uint16_t * samples, int sample_count)
         }
 
         printf("Short [01] --\n");
-        printf("Bracket 0 (<107): %d samples, avg: %f\n", bracket_count[0],
+        printf("Bracket 0 (<385): %d samples, avg: %f\n", bracket_count[0],
                                 (float)brackets[0]/(float)bracket_count[0]);
-        printf("Bracket 1 (<115): %d samples, avg: %f\n", bracket_count[1],
+        printf("Bracket 1 (<405): %d samples, avg: %f\n", bracket_count[1],
                                 (float)brackets[1]/(float)bracket_count[1]);
-        printf("Bracket 2 (<140): %d samples, avg: %f\n", bracket_count[2],
+        printf("Bracket 2 (<440): %d samples, avg: %f\n", bracket_count[2],
                                 (float)brackets[2]/(float)bracket_count[2]);
         printf("Total: %d samples\n", bracket_count[0]
                                   + bracket_count[1]
                                   + bracket_count[2]);
 
         printf("\nMedium [001] --\n");
-        printf("Bracket 3 (<175): %d samples, avg: %f\n", bracket_count[3],
+        printf("Bracket 3 (<585): %d samples, avg: %f\n", bracket_count[3],
                                 (float)brackets[3]/(float)bracket_count[3]);
-        printf("Bracket 4 (<185): %d samples, avg: %f\n", bracket_count[4],
+        printf("Bracket 4 (<610): %d samples, avg: %f\n", bracket_count[4],
                                 (float)brackets[4]/(float)bracket_count[4]);
-        printf("Bracket 5 (<200): %d samples, avg: %f\n", bracket_count[5],
+        printf("Bracket 5 (<660): %d samples, avg: %f\n", bracket_count[5],
                                 (float)brackets[5]/(float)bracket_count[5]);
         printf("Total: %d samples\n", bracket_count[3]
                                   + bracket_count[4]
                                   + bracket_count[5]);
 
         printf("\nLong [0001] --\n");
-        printf("Bracket 6 (<235): %d samples, avg: %f\n", bracket_count[6],
+        printf("Bracket 6 (<780): %d samples, avg: %f\n", bracket_count[6],
                                 (float)brackets[6]/(float)bracket_count[6]);
-        printf("Bracket 7 (<255): %d samples, avg: %f\n", bracket_count[7],
+        printf("Bracket 7 (<820): %d samples, avg: %f\n", bracket_count[7],
                                 (float)brackets[7]/(float)bracket_count[7]);
         printf("Bracket 8 (----): %d samples, avg: %f\n", bracket_count[8],
                                 (float)brackets[8]/(float)bracket_count[8]);
         printf("Total: %d samples (%d)\n", bracket_count[6]
                                   + bracket_count[7]
                                   + bracket_count[8], sample_count);
-	printf("Total time: %fus\n", (total_time * 30) / 1000.0);
-	printf("Total time, ink. bit mark: %fus\n",
-			((total_time * 30) + (sample_count * 660)) / 1000.0);
+	printf("Total time: %fus\n", (total_time * 10) / 1000.0);
 }
 
 static const uint16_t q_limits[] = { 108, 114, 140,
@@ -307,7 +309,7 @@ int read_track_timing(int argc, char ** argv)
         pru_set_head_side(pru, track_side);
 
 	do {
-		sample_count = pru_read_bit_timing(pru, &timing);
+		sample_count = pru_read_timing(pru, &timing);
 
 		printf("\tGot %d samples\n", sample_count);
 
@@ -376,24 +378,24 @@ int write_track_timing(int argc, char ** argv)
         for(i = 0; i < sample_count; i++) {
                 // 1 == 115ns high
                 // 135 + (sample * 10)
-                timing[i] = 319; // 01 = 2us bit-cell
+                timing[i] = 400; // 01 = 2us bit-cell
         }
-        // 4000ns - 675ns = 3325ns - 135 = 3190ns
-        // 6000ns - 675ns = 5325ns - 135 = 5190ns
-        // 8000ns - 675ns = 7325ns - 135 = 7190ns
         // 0x4489
-        timing[500] = 319; 
-        timing[501] = 719;
-        timing[502] = 519;
-        timing[503] = 719;
-        timing[504] = 519;
-        timing[505] = 319; 
-        timing[506] = 719;
-        timing[507] = 519;
-        timing[508] = 719;
-        timing[509] = 519;
-        timing[510] = 319;
-        timing[511] = 319;
+        timing[500] = 400; 
+        timing[501] = 800;
+        timing[502] = 600;
+        timing[503] = 800;
+        timing[504] = 600;
+
+        // 0x4489
+        timing[505] = 400; 
+        timing[506] = 800;
+        timing[507] = 600;
+        timing[508] = 800;
+        timing[509] = 600;
+
+        timing[510] = 400;
+        timing[511] = 400;
 
         printf("Sending %d samples, (%d bytes)\n",
                                                 sample_count,

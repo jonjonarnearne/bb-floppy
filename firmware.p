@@ -113,6 +113,7 @@ WAIT_FOR_COMMAND:
         qbeq WRITE_BIT_TIMING, interface.command, COMMAND_WRITE_BIT_TIMING
         qbeq TEST_TRACK_0, interface.command, COMMAND_TEST_TRACK_0
         qbeq WRITE_TIMING, interface.command, COMMAND_WRITE_TIMING
+        qbeq READ_TIMING, interface.command, COMMAND_READ_TIMING
 
         jmp  WAIT_FOR_COMMAND
 
@@ -234,8 +235,10 @@ WRITE_BIT_TIMING:
         jmp  SEND_ACK
 
 WRITE_TIMING:
-        //  We might try to read an entire track here.
         jal  STACK.ret_addr, fnWrite_Timing
+        jmp  SEND_ACK
+READ_TIMING:
+        jal  STACK.ret_addr, fnRead_Timing
         jmp  SEND_ACK
 
 SEND_ACK:
@@ -1075,8 +1078,7 @@ write_timing_wait_index_falling:
 
         clr  PIN_WRITE_GATE
 
-        // These are the 3 last instructions of the write_timing_LOOP
-        nop0 r0, r0, r0
+        // These are the 2 last instructions of the write_timing_LOOP
         nop0 r0, r0, r0
         nop0 r0, r0, r0
 write_timing_LOOP:
@@ -1095,6 +1097,7 @@ write_timing_skip_interrupt:
         nop0 r0, r0, r0
         nop0 r0, r0, r0
 
+        // ---- 35 ns -- from write_timing_LOOP
 write_timing_check_ram_offset:
         lsr  write_timing.mask, write_timing.ram_offset, #12
         qbeq write_timing_reset_ram_offset, write_timing.mask, #2
@@ -1116,21 +1119,27 @@ write_timing_wrong_offset:
         nop0 r0, r0, r0
         nop0 r0, r0, r0
 
-        // ---- 60 ns -- from write_timing_LOOP
-        // ---- 75 ns -- from we went HIGH
+        // ---- 55 ns -- from write_timing_LOOP
+        // ---- 65 ns -- from we went HIGH
 write_timing_write:
         // Load timer from host
         lbbo write_timing.timer, GLOBAL.sharedMem, \
                                         write_timing.ram_offset, \
                                         SIZE(write_timing.timer)
         // -- 15 ns
+
+        // We subtract 30 for the 300ns we are writing
+        // the bit mark, and 12 for the 120ns we spend doing before the loop!
+        sub  write_timing.timer, write_timing.timer, #43
+        // -- 5 ns
+        
+
         // Increment ram pointer
         add  write_timing.ram_offset, write_timing.ram_offset, \
                                         SIZE(write_timing.timer)
         // --  5 ns
-        // ---- 20 ns -- from write_timing_write
+        // ---- 25 ns -- from write_timing_write
 
-        nop0 r0, r0, r0
         qbeq write_timing_set_weak, write_timing.sample_count, \
                                     write_timing.weak_bit
 
@@ -1156,31 +1165,29 @@ write_timing_index_low:
         // Check if the flag to break is set!
         qbbs write_timing_BREAK_LOOP, write_timing.flags, BREAK_ON_IDX_LOW
         nop0 r0, r0, r0
-        // 10ns
+        // -- 10 ns
 write_timing_index_high:
 
         // ---- 55 ns -- from write_timing_write
-        // ---- 115 ns -- from write_timing_LOOP
-        // ---- 130 ns -- from we went HIGH
+        // ---- 110 ns -- from write_timing_LOOP
+        // ---- 120 ns -- from we went HIGH
 write_timing_timer_HIGH_LOOP:
         dec  write_timing.timer
         qbne write_timing_timer_HIGH_LOOP, write_timing.timer, #0
         // 10ns per iteration
 
 
-        // The least time we have spent here is 145ns
-        // 135ns + (10 * iteration)
+        // The least time we have spent here is 155ns
+        // 145ns + (10 * iteration)
         // With no iterations in the HIGH_LOOP
 
 // --------------- GO LOW - GO LOW - GO LOW -----------------------------
-        nop0 r0, r0, r0
 
-        // Now, we time the period we are low
+        // We spend 300 ns in this function!
         jal  write_timing.fnPtr_ret_addr, write_timing.fnPtr_Write_Low
-        // We will keep PIN_WRITE_DATA LOW for appx. 675ns
+        // We will keep PIN_WRITE_DATA LOW for 280ns
 
 
-        nop0 r0, r0, r0
         // Break the loop here if we have consumed all samples!
         dec  write_timing.sample_count
         qbne write_timing_LOOP, write_timing.sample_count, #0
@@ -1196,23 +1203,29 @@ write_timing_BREAK_LOOP:
         jmp  STACK.ret_addr
 
 fnWrite_Timing_Regular_Bit:
+        // We spend 300 ns in this function!
+        // 5 ns for the call
         clr  PIN_WRITE_DATA
-        // 5ns
+        // 5 ns
         // We hold the write data low for 660ns 
 
-        ldi  write_timing.timer, #66
+        nop0 r0, r0, r0
         // 5ns
+        ldi  write_timing.timer, #27
+        // 5ns
+        // ---- 20 ns since call
 write_timing_timer_LOW_LOOP:
         dec  write_timing.timer
         qbne write_timing_timer_LOW_LOOP, write_timing.timer, #0
-        // 10ns per iteration * 66 = 660ns
+        // 10ns per iteration * 27 = 270ns
 
         set  PIN_WRITE_DATA
 
         jmp  write_timing.fnPtr_ret_addr
 
 fnWrite_Timing_Weak_Bit:
-        // 5ns
+        // -- 5 ns for the call to this function
+        // We must spend  300ns in this function
         // We toggle the write data pin, to create a weak bit!
 
         clr  PIN_WRITE_DATA
@@ -1238,14 +1251,134 @@ fnWrite_Timing_Weak_Bit:
 
         set  PIN_WRITE_DATA
 
-        // 66ns in loop!
-        ldi  write_timing.timer, #59
+        ldi  write_timing.timer, #20 // 200ns
+        //  ---- 90 ns since call
 write_timing_timer_WEAK_HI_LOOP:
         dec  write_timing.timer
         qbne write_timing_timer_WEAK_HI_LOOP, write_timing.timer, #0
 
-        //set  PIN_WRITE_DATA
+        nop0 r0, r0, r0
         jmp  write_timing.fnPtr_ret_addr
         
 .leave write_timing_scope
 
+.struct Read_Timing
+        .u8   flags
+        .u8   unused
+        .u16  timer
+        .u16  ram_offset        // Position of write pointer
+        .u16  ret_addr
+        .u16  mask
+        .u16  unused1
+        .u32  sample_count      // Number of samples read
+        .u32  total_time
+        .u32  target_time
+.ends
+.enter read_timing_scope
+.assign Read_Timing, r19, r24, read_timing
+fnRead_Timing:
+        rcp  read_timing.ret_addr, STACK.ret_addr
+
+        rclr read_timing.total_time
+        rclr read_timing.ram_offset
+        rclr read_timing.sample_count
+        clr  read_timing.flags, BREAK_ON_IDX_LOW
+
+        // Read for 200.000.010 ns ~ 200.000us = 1.0revolutions.
+        // 200.000.010/30 = 6.666.667 loops = 0x0065.b9ab
+        ldi  read_timing.target_time.w0, #0xb9ab
+        ldi  read_timing.target_time.w2, #0x0065
+
+
+read_timing_wait_index_high:
+        M_CHECK_ABORT
+        qbbc read_timing_wait_index_high, PIN_INDEX
+
+read_timing_wait_index_falling:
+        M_CHECK_ABORT
+        qbbs read_timing_wait_index_falling, PIN_INDEX
+
+read_timing_LOOP:
+        rclr read_timing.timer
+
+read_timing_timer_TIME_LOW:
+        inc read_timing.timer
+        qbbc read_timing_timer_TIME_LOW, PIN_READ_DATA
+read_timing_timer_TIME_HIGH:
+        inc  read_timing.timer
+        qbbs read_timing_timer_TIME_HIGH, PIN_READ_DATA
+
+        //   Add the timing of this low part!
+        add  read_timing.timer, read_timing.timer, #30
+
+        // PIN_READ_DATA, just fell down
+        // Now store the timing info
+        sbbo read_timing.timer, GLOBAL.sharedMem, read_timing.ram_offset, \
+                                                SIZE(read_timing.timer)
+        add  read_timing.ram_offset, read_timing.ram_offset, \
+                                        SIZE(read_timing.timer)
+
+        inc  read_timing.sample_count
+        add  read_timing.total_time, read_timing.total_time, \
+                                        read_timing.timer
+
+        // ---- 20 ns from PIN_READ_DATA LOW
+
+        // Check if we have read 0x1000 bytes, if we have, notify ARM
+        ldi  read_timing.mask, #0x0fff
+        and  read_timing.mask, read_timing.mask, read_timing.ram_offset
+        qbne read_timing_wrong_offset, read_timing.mask, #0
+
+        ldi  r31.b0, PRU0_ARM_INTERRUPT+16
+
+        // ---- 40 ns from PIN_READ_DATA LOW
+        // Check if we should reset the ram_offset
+        lsr  read_timing.mask, read_timing.ram_offset, #12
+        qbeq read_timing_reset_ram_offset, read_timing.mask, #2
+        nop0 r0, r0, r0
+        jmp  read_timing_check_index_pin
+        
+
+read_timing_reset_ram_offset:
+        // We are at offset 0x2000, reset the ram_offset.
+        rclr read_timing.ram_offset
+        jmp  read_timing_check_index_pin
+
+read_timing_wrong_offset:
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+
+        // ---- 60ns from PIN_READ_DATA LOW
+
+read_timing_check_index_pin:
+        qbbc read_timing_index_low, PIN_INDEX
+
+        set  read_timing.flags, BREAK_ON_IDX_LOW
+        jmp  read_timing_index_not_low
+
+read_timing_index_low:
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        // If index just fell down, break!
+        qbbs read_timing_BREAK_LOOP, read_timing.flags, BREAK_ON_IDX_LOW
+
+read_timing_index_not_low:
+        ldi read_timing.timer, #21
+read_timing_low_wait:
+        dec read_timing.timer
+        qbne read_timing_low_wait, read_timing.timer, #0
+        
+        jmp  read_timing_LOOP
+        // ---- 300ns from PIN_READ_DATA LOW
+        
+read_timing_BREAK_LOOP:
+        sbbo read_timing.sample_count, GLOBAL.pruMem, \
+                                        OFFSET(interface.read_count), \
+                                        SIZE(interface.read_count)
+
+        rcp  STACK.ret_addr, read_timing.ret_addr
+        jmp  STACK.ret_addr
+.leave read_timing_scope

@@ -8,6 +8,7 @@
 
 #include "arm-interface.h"
 #include "pru-setup.h"
+#include "list.h"
 
 #define PRU_NUM0	0
 
@@ -531,7 +532,7 @@ int pru_write_timing(struct pru * pru, uint16_t *source,
 {
         uint8_t mul = 0;
         uint16_t * volatile dest = (uint16_t * volatile)pru->shared_ram;
-        int copy_size, err_requests = 0;
+        int copy_size;
 
 	volatile struct ARM_IF *intf = (volatile struct ARM_IF *)pru->ram;	
         if (!pru->running) return sample_count;
@@ -593,3 +594,79 @@ int pru_write_timing(struct pru * pru, uint16_t *source,
         return intf->read_count;
 }
 
+int pru_read_timing(struct pru * pru, uint16_t ** data)
+{
+        uint16_t * volatile source = (uint16_t * volatile)pru->shared_ram;
+
+        int rc, sample_count = 0;
+        struct bb_list *buffer_list = NULL;
+        uint8_t mul = 0;
+
+	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
+	*data = NULL;
+        if (!pru->running)
+		return 0;
+
+        rc = bb_list_new(&buffer_list);
+        if (!rc) {
+                fprintf(stderr,
+                        "Couldn't allocate memory for data list buffer!\n");
+                return 0;
+        }
+
+        memset(pru->shared_ram, 0x00, 0x3000);
+	intf->command = COMMAND_READ_TIMING;
+
+        while(1) {
+                prussdrv_pru_wait_event(PRU_EVTOUT_0);
+                prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
+
+                // We read 0x1000 bytes at a time, from the 0x3000byte buffer
+                // jumping back and forth in sync with the PRU
+	        if (intf->command == COMMAND_READ_TIMING) {
+                        rc = bb_list_append(buffer_list, source,
+                                                0x1000/sizeof(*source));
+                        if (!rc) {
+                                fprintf(stderr,
+                                "fatal -- Couldn't copy data to buffer!\n");
+                                continue;
+                        }
+                        sample_count += 0x1000/sizeof(*source);
+
+                        if (++mul & 0x1)
+                                source += 0x1000/sizeof(*source);
+                        else
+                                source -= 0x1000/sizeof(*source);
+
+                } else if (intf->command == (COMMAND_READ_TIMING & 0x7f)) {
+                        break;
+                } else {
+                        printf("Got wrong Ack: 0x%02x\n", intf->command);
+                        break;
+                }
+        }
+        rc = bb_list_append(buffer_list, source,
+                                        intf->read_count - sample_count);
+        if (!rc)
+                fprintf(stderr, "fatal -- Couldn't copy data to buffer!\n");
+
+        sample_count += intf->read_count - sample_count;
+        if (sample_count != intf->read_count) 
+                fprintf(stderr, "ASSERTION FAILED!!!\n");
+
+        *data = malloc(intf->read_count * sizeof(**data));
+        if (!*data) {
+                fprintf(stderr,
+                        "Couldn't allocate memory for data list buffer!\n");
+                return 0;
+        }
+
+        rc = bb_list_flatten(buffer_list, *data, intf->read_count);
+        if (rc) {
+                fprintf(stderr, "Another assertio failed!\n");
+        }
+        bb_list_free(buffer_list);
+        buffer_list = NULL;
+
+	return intf->read_count;
+}
