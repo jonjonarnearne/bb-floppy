@@ -311,7 +311,7 @@ int init_read(int argc, char ** argv)
         FILE *fp;
 	int i;
 	unsigned char *mfm_track, *mfm_disk;
-	if (argc != 3) {
+	if (argc != 2) {
 		fprintf(stderr, "You must specify a filename\n");
 		return -1;
 	}
@@ -348,7 +348,7 @@ int init_read(int argc, char ** argv)
 	}
         pru_stop_motor(pru);
 
-	fp = fopen(argv[2], "w");
+	fp = fopen(argv[1], "w");
 	fwrite(mfm_disk, 1, RAW_MFM_TRACK_SIZE 
 				* TRACKS_PER_CYLINDER
 				* CYLINDERS_PER_DISK, fp);
@@ -360,24 +360,39 @@ int init_read(int argc, char ** argv)
 
 int init_read_track(int argc, char ** argv)
 {
+	enum pru_head_side track_side = PRU_HEAD_UPPER;
+	char *filename = NULL;
+	int opt;
 	FILE *fp;
-	char filename[255];
-	unsigned char *mfm_track = malloc(RAW_MFM_TRACK_SIZE);
+	unsigned char *mfm_track = malloc(0x3000);//malloc(RAW_MFM_TRACK_SIZE);
 	if (!mfm_track)
 		return -1;
 
+	while((opt = getopt(argc, argv, "-l")) != -1) {
+		switch(opt) {
+		case 'l':
+			track_side = PRU_HEAD_LOWER;
+			break;
+		case 1:
+			printf("Filename detected!\n");
+			filename = optarg;
+		}
+	}
+
 	pru_start_motor(pru);
+        pru_set_head_side(pru, track_side);
 	pru_read_track(pru, mfm_track);
 	pru_stop_motor(pru);
 
 	decode_track(mfm_track, NULL, NULL);
+	//hexdump(mfm_track, 0x3000);
 
-	if (argc == 3) {
-		snprintf(filename, 255, "%s.mfm_track", argv[2]);
+	if (filename) {
 		fp = fopen(filename, "w");
 		fwrite(mfm_track, 1, RAW_MFM_TRACK_SIZE, fp);
 		fclose(fp);
 	}
+
         free(mfm_track);
 
 	return 0;
@@ -387,7 +402,7 @@ int init_write_track(int argc, char ** argv)
 {
 	FILE *fp;
         unsigned char *mfm_track;
-	if (argc != 3) {
+	if (argc != 2) {
 		usage();
 		fprintf(stderr, "You must specify a filename\n");
 		return -1;
@@ -397,7 +412,7 @@ int init_write_track(int argc, char ** argv)
 	if (!mfm_track)
 		return -1;
 
-	fp = fopen(argv[2], "r");
+	fp = fopen(argv[1], "r");
 	fread(mfm_track, 1, RAW_MFM_TRACK_SIZE, fp);
 	fclose(fp);
 
@@ -409,18 +424,32 @@ int init_write_track(int argc, char ** argv)
 
 int init_read_sector(int argc, char ** argv)
 {
-        int sector_info;
+        //int sector_info;
+	int opt;
+	enum pru_head_side track_side = PRU_HEAD_UPPER;
 	uint8_t data[512] = {0};
-	memset(pru->shared_ram, 0x00, 0x3000);
+	unsigned char *mfm_sector = malloc(0x3000);//malloc(RAW_MFM_TRACK_SIZE);
+	if (!mfm_sector)
+		return -1;
+
+	while((opt = getopt(argc, argv, "-l")) != -1) {
+		switch(opt) {
+		case 'l':
+			track_side = PRU_HEAD_LOWER;
+			break;
+		}
+	}
 
 	pru_start_motor(pru);
-	pru_read_sector(pru);
+        pru_set_head_side(pru, track_side);
+	pru_read_sector(pru, mfm_sector);
 	pru_stop_motor(pru);
 
-        hexdump(pru->shared_ram, 16);
+	decode_mfm_sector(mfm_sector + 8, RAW_MFM_SECTOR_SIZE, data);
+	//hexdump(mfm_sector, 0x3000);
+	//print_sector_info(sector_info);
 
-	sector_info = decode_mfm_sector(pru->shared_ram + 8, RAW_MFM_SECTOR_SIZE, data);
-	print_sector_info(sector_info);
+	free(mfm_sector);
 
 	return 0;
 }
@@ -440,6 +469,43 @@ int init_read_sector(int argc, char ** argv)
         printf("0b%c%c%c%c%c%c%c%c\n", BYTE_TO_BIN((sector[dword] & 0xff0000) >> 16));
         printf("0b%c%c%c%c%c%c%c%c\n", BYTE_TO_BIN((sector[dword] & 0xff000000) >> 24));
 #endif
+
+int init_step_head(int argc, char **  argv)
+{
+	enum pru_head_dir dir;
+	long int step_count;
+	if (argc != 3) {
+		usage();
+		fprintf(stderr, "fatal: You must specify DIR <I|O> and COUNT <n>\n");
+		return 1;
+	}
+
+	step_count = strtol(argv[2], NULL, 10);
+	if (step_count < 0 || step_count > 80) {
+		usage();
+		fprintf(stderr, "fatal: COUNT must be 0 <= COUNT <= 80\n");
+		return 1;
+	}
+	switch(argv[1][0]) {
+	case 'I':
+		dir = PRU_HEAD_INC;
+		break;
+	case 'O':
+		dir = PRU_HEAD_DEC;
+		break;
+	default:
+		usage();
+		fprintf(stderr, "fatal: DIR must be I or O\n");
+		return 1;
+	}
+
+        pru_start_motor(pru);
+        pru_set_head_dir(pru, dir);
+	pru_step_head(pru, step_count);
+        pru_stop_motor(pru);
+
+	return 0;
+}
 
 
 int init_erase_track(int argc, char ** argv)
@@ -521,7 +587,19 @@ int init_identify(int argc, char ** argv)
 
 int find_sync(int argc, char ** argv)
 {
-        pru_start_motor(pru);
+	int opt;
+	enum pru_head_side track_side = PRU_HEAD_UPPER;
+
+	while((opt = getopt(argc, argv, "-l")) != -1) {
+		switch(opt) {
+		case 'l':
+			track_side = PRU_HEAD_LOWER;
+			break;
+		}
+	}
+
+	pru_start_motor(pru);
+        pru_set_head_side(pru, track_side);
 	pru_find_sync(pru);
         pru_stop_motor(pru);
         return 0;
@@ -545,8 +623,7 @@ int write_raw_mfm(int argc, char ** argv)
 	if (!dwords)
 		exit(-1);
 
-	printf("argc: %d\n", argc);
-	if (argc != 3) {
+	if (argc != 2) {
 		usage();
 		printf("You must give a filename to a mfm file\n");
 		return -1;	
@@ -556,7 +633,7 @@ int write_raw_mfm(int argc, char ** argv)
 	dwords[1] = htobe32(0x44894489);
 
 	count = 2;
-	fp = fopen(argv[2], "r");
+	fp = fopen(argv[1], "r");
 	while(1) {
 		items = fread(&dword, sizeof(dword), 1, fp);
 		if (!items) break;
@@ -588,6 +665,7 @@ static const struct modes {
 	{ "find_sync", "See if we find any sync marker", find_sync },
 	{ "reset", "Reset head to cylinder 0", reset_drive },
 	{ "write_raw", "Write raw mfm file to drive", write_raw_mfm },
+	{ "step_head", "Move head [n] steps in [dir]", init_step_head },
 	{ NULL, NULL }
 };
 
@@ -615,7 +693,11 @@ static void int_handler(int sig)
 
 int main(int argc, char **argv)
 {
+	int i, e;
 	const struct modes *m = modes;
+	int mod_argc = argc;
+	char ** mod_argv;
+	char *arg;
 
 	if (argc == 1) {
 		usage();
@@ -634,6 +716,26 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 
+	mod_argv = malloc(sizeof(char *) * mod_argc);
+	if (!mod_argv) {
+		fprintf(stderr, "fatal: Couldn't alloc memory form mod_argv\n");
+		exit(1);
+	}
+
+	// Remove the mode argument from argv,
+	// and pass mod_argv to the handler functions
+	mod_argc -= 1;
+	for(i=0, e=0; i<argc; i++) {
+		if (i == 1) continue;
+		arg = malloc(strlen(argv[i] + 1));
+		if (!arg) {
+			fprintf(stderr, "fatal: "
+				"Failed to allocate memory for argument\n");
+			exit(1);
+		}
+		strcpy(arg, argv[i]);
+		mod_argv[e++] = arg;
+	}
 
 	pru = pru_setup();
 	if (!pru)
@@ -641,7 +743,11 @@ int main(int argc, char **argv)
 
         signal(SIGINT, int_handler);
 
-	m->init(argc, argv);
+	m->init(mod_argc, mod_argv);
+	for(i=0; i<argc; i++) {
+		free(mod_argv[i]);
+	}
+	free(mod_argv);
 
 	pru_exit(pru);
 

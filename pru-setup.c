@@ -162,19 +162,29 @@ void pru_find_sync(struct pru * pru)
 	return;
 }
 
-void pru_read_sector(struct pru * pru)
+void pru_read_sector(struct pru * pru, void * data)
 {
+        int i;
+        unsigned int *dest = data;
+        unsigned int * volatile source = (unsigned int * volatile)pru->shared_ram;
+
 	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
         if (!pru->running) return;
 
         // IMPORTANT: SET ARGUMENT BEFORE WE SET THE COMMAND!
         // The argument is number of dwords
-	intf->argument = 0x500 / 4; //1280
+        memset(pru->shared_ram, 0xaa, 0x3000);
+
+	intf->argument = (RAW_MFM_SECTOR_SIZE + 16) / 4;
 	intf->command = COMMAND_READ_SECTOR;
         prussdrv_pru_wait_event(PRU_EVTOUT_0);
         prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
 	if (intf->command != (COMMAND_READ_SECTOR & 0x7f))
                 printf("Got wrong Ack: 0x%02x\n", intf->command);
+
+        for(i=0; i < 0x3000/sizeof(*dest); i++) {
+                dest[i] = htobe32(source[i]);
+        }
 
 	return;
 }
@@ -202,7 +212,8 @@ void pru_read_track(struct pru * pru, void * data)
 	if (intf->command != (COMMAND_READ_SECTOR & 0x7f))
                 printf("Got wrong Ack: 0x%02x\n", intf->command);
 
-        for(i=0; i < RAW_MFM_TRACK_SIZE/sizeof(*dest); i++) {
+        //for(i=0; i < RAW_MFM_TRACK_SIZE/sizeof(*dest); i++) {
+        for(i=0; i < 0x3000/sizeof(*dest); i++) {
                 dest[i] = htobe32(source[i]);
         }
 

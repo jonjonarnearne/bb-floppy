@@ -213,6 +213,10 @@ fnFind_Sync:
         ldi  find_sync.sync_word.w0, SYNC_WORD
         ldi  find_sync.sync_word.w2, SYNC_WORD
 
+        // Lemmings sync word!
+        //ldi  find_sync.sync_word.w0, #0xaaaa
+        //ldi  find_sync.sync_word.w2, #0x912a
+
 time_to_low:
         rclr find_sync.timer
         jal  STACK.ret_addr, fnWait_For_Hi
@@ -318,8 +322,8 @@ rs_timer:
         inc  read_sector.timer
         qbbs rs_timer, PIN_READ_DATA 
 
-        qbgt rs_short, read_sector.timer, #140       // timer < 140
-        qbgt rs_med, read_sector.timer, #190       // timer < 190
+        qbgt rs_short, read_sector.timer, #140//#140       // timer < 140
+        qbgt rs_med, read_sector.timer, #198  //#190       // timer < 190
 
 rs_long:
         ldi  read_sector.bit_remain, #3

@@ -41,7 +41,7 @@ void pru_stop_motor(struct pru * pru);
 void pru_stop_motor(struct pru * pru);
 
 void pru_find_sync(struct pru * pru);
-void pru_read_sector(struct pru * pru);
+void pru_read_sector(struct pru * pru, void * data);
 void pru_read_track(struct pru * pru, void * data);
 void pru_erase_track(struct pru * pru);
 void pru_write_track(struct pru * pru, void *track);
