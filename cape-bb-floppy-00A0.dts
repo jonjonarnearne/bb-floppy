@@ -44,7 +44,7 @@
 	exclusive-use =
 		"P8.15",        /* Input */
 		"P8.16",        /* Input */
-		"P9.24",        /* Input */
+		"P9.24",        /* Input - ReadData */
 		"P9.25",        /* Input */
 
 		"P9.27",        /* Output */
@@ -64,7 +64,7 @@
 				pinctrl-single,pins = <
                     0x03c 0x26 /* P8_15 = pr1_pru0_pru_r31_15 ( MODE6 | INPUT )             */
                     0x038 0x26 /* P8_16 = pr1_pru0_pru_r31_14 ( MODE6 | INPUT )             */
-                    0x184 0x2e /* P9_24 = pr1_pru0_pru_r31_16 ( MODE6 | INPUT )		    */
+                    0x184 0x2e /* P9_24 = pr1_pru0_pru_r31_16 ( MODE6 | INPUT | DISABLE )   */
                     0x1ac 0x26 /* P9_25 = pr1_pru0_pru_r31_7  ( MODE6 | INPUT )             */
 
                     0x1a4 0x15 /* P9_27 = pr1_pru0_pru_r30_5  ( MODE5 | OUTPUT | PULL UP )  */

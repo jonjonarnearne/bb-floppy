@@ -41,23 +41,22 @@
         .u32 dword
         .u16 dwordIndex
         .u16 state
-        .u16 timer
         .u8  bitRemain
         .u8  bitCount
+        .u8  timer
 .ends
-.assign Data, r0, r5, RxData
+.assign Data, r0, r5.b2, RxData
 
 #define STATUS_TRIGGER_QUIT     0xff
 #define STATUS_SERVER_GOT_TRACK 0x0001
 #define STATUS_SERVER_QUIT      0xaaaa
 .struct Status
-        .u8   trigger           //0
-        .u8   status            //1
-        .u16  server            //2
-        .u32  trackLen          //4
-        .u16  timer             //8
+        .u8   trigger
+        .u8   status
+        .u16  server
+        .u32  trackLen
 .ends
-.assign Status, r6, r8.w0, RxStatus
+.assign Status, r6, r7, RxStatus
 
 #define SYNC_WORD               0x4489
 
@@ -216,7 +215,7 @@ rd_timer:
         lbbo RxStatus.trigger, RxData.pruMem, OFFSET(RxStatus.trigger), SIZE(RxStatus.trigger)
         QBEQ END, RxStatus.trigger, STATUS_TRIGGER_QUIT
         QBBS rd_timer, PIN_READ_DATA
-
+        
         QBGT rd_short, RxData.timer, #140   // timer < 140
         QBGT rd_med,   RxData.timer, #190   // timer < 190 
 rd_long:
@@ -247,6 +246,8 @@ rd_short:
         jmp  rd_time_to_low
 
 got_dword:
+
+        SET  PIN_DEBUG
         sbbo RxData.dword, RxData.sharedMem, RxData.dwordIndex, SIZE(RxData.dword)
         add  RxData.dwordIndex, RxData.dwordIndex, SIZE(RxData.dword)
         add  r20, r20, #1                // Inc dword counter
@@ -260,6 +261,7 @@ got_dword:
         or   RxData.dword, RxData.dword, #1
         
 finalize: 
+        CLR  PIN_DEBUG
         // Check if we have received all bytes
         qble rd_time_to_low, RxStatus.trackLen, r20   // branch if r20 <= RxStatus.trackLen
 

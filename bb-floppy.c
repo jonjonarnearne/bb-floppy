@@ -57,6 +57,15 @@ void decode_data(unsigned char *buf, int len)
 }
 #endif
 
+void bin_dump(unsigned char val)
+{
+        int i;
+        printf("0x%02x 0b", val);
+        for (i = 0; i < 8; i++)
+                printf("%d", (val & (1 << i)) ? 1 : 0 );
+        printf("\n");
+}
+
 struct mfm_sector {
         int odd_info;
         int even_info;
@@ -70,17 +79,13 @@ struct mfm_sector {
         unsigned char even_data[512];
 } __attribute__((packed));
 
-void bin_dump(unsigned char val)
-{
-        int i;
-        printf("0x%02x 0b", val);
-        for (i = 0; i < 8; i++)
-                printf("%d", (val & (1 << i)) ? 1 : 0 );
-        printf("\n");
-}
 void decode_mfm_sector(unsigned char *buf, int mfm_sector_len)
 {
         unsigned int info;
+        int label[4];
+        int head_chksum;
+        int data_chksum;
+        int chksum = 0L;
 	unsigned int *test;
 	int i;
         struct mfm_sector *sector = (struct mfm_sector *)buf;
@@ -111,6 +116,7 @@ void decode_mfm_sector(unsigned char *buf, int mfm_sector_len)
         info <<= 1;
         info |= (sector->even_info & 0x55555555);
 
+
         //printf("Sector info: 0x%08x\n", info); 
 	//printf("Size of sector: 0x%x\n", sizeof(struct mfm_sector));
         printf("Odd: 0x%08x | Even: 0x%08x\n", sector->odd_info, sector->even_info);
@@ -121,6 +127,36 @@ void decode_mfm_sector(unsigned char *buf, int mfm_sector_len)
                         (((info & 0x00ff0000) >> 16) & 0x1) ? "LOWER" : "UPPER",
                         (info & 0x0000ff00) >> 8,
                         (info & 0x000000ff));
+
+
+        label[0] = ((sector->odd_label[0] & MASK) << 1) | (sector->even_label[0] & MASK);
+        label[1] = ((sector->odd_label[1] & MASK) << 1) | (sector->even_label[1] & MASK);
+        label[2] = ((sector->odd_label[2] & MASK) << 1) | (sector->even_label[2] & MASK);
+        label[3] = ((sector->odd_label[3] & MASK) << 1) | (sector->even_label[3] & MASK);
+        printf("Label: 0x%08x 0x%08x 0x%08x 0x%08x\n", label[0], label[1], label[2], label[3]);
+
+        head_chksum = ((sector->odd_h_chksum & MASK) << 1) | (sector->even_h_chksum & MASK);
+        chksum ^= sector->odd_info;
+        chksum ^= sector->even_info;
+        chksum &= MASK;
+        chksum ^= sector->odd_label[0];
+        chksum ^= sector->even_label[0];
+        chksum ^= sector->odd_label[1];
+        chksum ^= sector->even_label[1];
+        chksum ^= sector->odd_label[2];
+        chksum ^= sector->even_label[2];
+        chksum ^= sector->odd_label[3];
+        chksum ^= sector->even_label[3];
+        chksum &= MASK;
+        if (chksum != head_chksum) {
+                printf("Calculated Head Chksum: 0x%08x\n", chksum);
+                printf("Head Checksum: 0x%08x\n", head_chksum);
+        }
+        chksum = 0L;
+
+        data_chksum = ((sector->odd_d_chksum & MASK) << 1) | (sector->even_d_chksum & MASK);
+        printf("Data Checksum: 0x%08x\n", data_chksum);
+
         return;
 }
 
