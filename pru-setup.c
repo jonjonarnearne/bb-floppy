@@ -196,7 +196,14 @@ void pru_erase_track(struct pru * pru)
 
 void pru_write_track(struct pru * pru, void *track)
 {
-        return;
+	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
+        if (!pru->running) return;
+
+	intf->command = COMMAND_WRITE_TRACK;
+        prussdrv_pru_wait_event(PRU_EVTOUT_0);
+        prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
+	if (intf->command != (COMMAND_WRITE_TRACK & 0x7f))
+                printf("Got wrong Ack: 0x%02x\n", intf->command);
 }
 
 void pru_set_head_dir(struct pru * pru, enum pru_head_dir dir)

@@ -395,10 +395,9 @@ int init_write_track(int argc, char ** argv)
 	memcpy(pru->shared_ram, track, 0x3000);
 	free(track);
 
-	//pru_start_motor(pru);
-	pru_erase_track(pru);
+	//pru_erase_track(pru);
+	pru_write_track(pru, track);
         printf("Done!\n\n");
-	//pru_stop_motor(pru);
 
 	return 0;
 
