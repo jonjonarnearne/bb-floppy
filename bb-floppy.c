@@ -36,13 +36,6 @@ void hexdump(const void *b, size_t len)
     printf("%s\n", str);
 }
 
-static uint8_t * volatile ram;			// 8Kb // 0x2000 // 8192
-static uint8_t * volatile shared_ram;		// 12Kb	// 0x3000 // 12288
-static void leave(int sig)
-{
-        ram[0] = 0xff;
-        printf("\n");
-}
 
 #define min(a,b) ((a < b) ? a : b)
 #define max(a,b) ((a > b) ? a : b)
@@ -85,7 +78,7 @@ void bin_dump(unsigned char val)
                 printf("%d", (val & (1 << i)) ? 1 : 0 );
         printf("\n");
 }
-void decode_sector(unsigned char *buf)
+void decode_mfm_sector(unsigned char *buf, int mfm_sector_len)
 {
         unsigned int info;
 	unsigned int *test;
@@ -118,28 +111,51 @@ void decode_sector(unsigned char *buf)
         info <<= 1;
         info |= (sector->even_info & 0x55555555);
 
-        printf("Sector info: 0x%08x\n", info); 
+        //printf("Sector info: 0x%08x\n", info); 
 	//printf("Size of sector: 0x%x\n", sizeof(struct mfm_sector));
-	printf("Sector: %u\n", (info & 0x0000ff00) >> 8);
+        printf("Odd: 0x%08x | Even: 0x%08x\n", sector->odd_info, sector->even_info);
+	printf("0x%08x: Sector magic: 0x%02x, number: %u - until end 0x%u\n",
+                        info,
+                        (info & 0xff000000) >> 24,
+                        (info & 0x0000ff00) >> 8,
+                        (info & 0x000000ff));
         return;
+}
+
+void decode_track(unsigned char *buf, int mfm_sector_len, int mfm_sector_count)
+{
+        int i;
+        for (i=0; i<mfm_sector_count; i++) {
+                decode_mfm_sector(buf, mfm_sector_len);
+                buf += mfm_sector_len;
+        }
+}
+
+static uint8_t * volatile ram;			// 8Kb // 0x2000 // 8192
+static uint8_t * volatile shared_ram;		// 12Kb	// 0x3000 // 12288
+static void leave(int sig)
+{
+        ram[0] = 0xff;
+        printf("\n");
 }
 
 int main(int argc, char **argv)
 {
 	int rc;
 
-	//FILE *fp;
-	int track_len = 0x1900;
+        //FILE *fp;
+	int mfm_sector_len = 0x1900;
         unsigned int * volatile counter;
 	unsigned int * volatile read_len;
-        unsigned int c;
-	unsigned char *buf;
+        unsigned int mfm_sector_count = 12, c = 0;
+	unsigned char *track_buf, *mfm_sector_buf;
        
-	buf = malloc(track_len);
-	if (!buf) {
+        track_buf = malloc(mfm_sector_len * mfm_sector_count);
+	if (!track_buf) {
                 fprintf(stderr, "Failed to alloc buffer!\n");
                 return -1;
 	}
+        mfm_sector_buf = track_buf;
 
 	/* Initialize the interrupt controller data */
 	tpruss_intc_initdata pruss_intc_initdata = PRUSS_INTC_INITDATA;
@@ -169,11 +185,11 @@ int main(int argc, char **argv)
 	}
 
         memset(ram, 0x00, 0x2000);
-	memset(shared_ram, 0x00, track_len);
+	memset(shared_ram, 0x00, mfm_sector_len);
         signal(SIGINT, leave);
 
 	read_len = (unsigned int *)(ram + 4);
-	read_len[0] = track_len;
+	read_len[0] = mfm_sector_len;
 
 	rc = prussdrv_exec_program(PRU_NUM0, "./bb-floppy.bin");
         printf("exec returned %d\n", rc);
@@ -185,24 +201,19 @@ int main(int argc, char **argv)
         while(1) {
 	        prussdrv_pru_wait_event(PRU_EVTOUT_0);
 	        prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
-                c = counter[0];
                 if (*(unsigned short *)(ram + 2) == 0xaaaa) {
-                        printf("%08x\n", *(unsigned int *)(ram + 8));
-                        printf("%08x\n", *(unsigned int *)(ram + 12));
-                        hexdump(ram + 8, 8);
-                        bin_dump(ram[11]);
                         break;
                 }
-
-
-                if (c < 140) {
-                        //printf("Group 1: %u\n", c);
-                } else if (c > 168 && c < 187) {
-                        //printf("Group 2: %u\n", c);
-                } else if (c > 230 && c < 255) {
-                        //printf("Group 3: %u\n", c);
-                } else {
-                        //printf("OOB: %u\n", c);
+                if (*(unsigned short *)(ram + 2) == 0x0001) {
+	                memcpy(mfm_sector_buf, shared_ram, mfm_sector_len);
+                        mfm_sector_buf += mfm_sector_len;
+                        c++;
+                        if (mfm_sector_count == c) {
+                                printf("Got %d mfm track(s)!\n", mfm_sector_count);
+                                ram[0] = 0xff;
+                                //mfm_sector_buf = track_buf;
+                                //c = 0;
+                        }
                 }
         }
 
@@ -213,24 +224,24 @@ int main(int argc, char **argv)
         printf("Bit remain: 0x%02x\n", ram[100]);
 
 
-        //hexdump(ram + 0x200, track_len);
-	memcpy(buf, shared_ram, track_len);
+        //hexdump(ram + 0x200, mfm_sector_len);
 	//printf("Total: %x\n", *(unsigned int *)(ram + 4));
 	//printf("Total: %x\n", *(unsigned int *)(ram + 8));
 	prussdrv_pru_disable(PRU_NUM0);
 	prussdrv_exit();
 
         printf("\nClean Exit!\n");
-        decode_sector(buf);
+        decode_track(track_buf, mfm_sector_len, mfm_sector_count);
 
 
-	//hexdump(buf, track_len);
-#if 0
+	//hexdump(buf, mfm_sector_len);
+        /*
 	fp = fopen("track.raw", "w");
-	fwrite(buf, 1, track_len, fp);
+	fwrite(track_buf, 1, mfm_sector_len * 12, fp);
 	fclose(fp);
-#endif
-	free(buf);
+        */
+
+	free(track_buf);
 
 	return 0;
 }

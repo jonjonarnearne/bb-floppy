@@ -47,8 +47,9 @@
 .ends
 .assign Data, r0, r5.b2, RxData
 
-#define STATUS_TRIGGER_QUIT        0xff
-#define STATUS_SERVER_QUIT       0xaaaa
+#define STATUS_TRIGGER_QUIT     0xff
+#define STATUS_SERVER_GOT_TRACK 0x0001
+#define STATUS_SERVER_QUIT      0xaaaa
 .struct Status
         .u8   trigger
         .u8   status
@@ -89,8 +90,6 @@ START:
         // READ == HI
         jal r17, fn_initWaitForLo
         // READ == LOW
-        jal r17, fn_waitForHi
-        // READ == HI
         ldi RxData.state, STATE_FIND_SYNC
 
 main:
@@ -105,15 +104,12 @@ main:
 
 callFindSync:
         jal r17, fn_findSync
-        jal r17, fn_waitForHi
         ldi r18.b0, 0x01
         sbbo r18, RxData.pruMem, OFFSET(RxStatus.status), SIZE(RxStatus.status) 
         jmp main
 callReadTrack:
         jal r17, fn_readTrack
-        jal r17, fn_waitForHi
-        ldi r18.b0, 0x02
-        sbbo r18, RxData.pruMem, OFFSET(RxStatus.status), SIZE(RxStatus.status) 
+        ldi RxData.state, STATE_FIND_SYNC
         jmp main
 callDone:
         sbbo RxData.bitRemain, RxData.pruMem, 100, SIZE(RxData.bitRemain)
@@ -142,6 +138,10 @@ initWaitForLo:
         QBBS initWaitForLo, PIN_READ_DATA
         jmp r17
 
+/****************************************************************************************************************/
+/*      fn_findSync                                                                                             */
+/*                                                                                                              */
+/****************************************************************************************************************/
 fn_findSync:
         xor RxData.dword, RxData.dword, RxData.dword
         xor RxData.bitRemain, RxData.bitRemain, RxData.bitRemain
@@ -151,6 +151,11 @@ fn_findSync:
 
 time_to_low:
         xor RxData.timer, RxData.timer, RxData.timer
+
+        and r19, r17, r17
+        jal r17, fn_waitForHi
+        and r17, r19, r19
+
 timer:
         add  RxData.timer, RxData.timer, #1
         lbbo RxStatus.trigger, RxData.pruMem, OFFSET(RxStatus.trigger), SIZE(RxStatus.trigger)
@@ -180,17 +185,16 @@ short:
         or   RxData.dword, RxData.dword, 1
         QBEQ found_it, RxData.dword, r18 
         
-        xor r19, r19, r19
-        or r19, r19, r17
-        jal r17, fn_waitForHi
-        xor r17, r17, r17
-        or r17, r17, r19
         jmp time_to_low
 
 found_it:
         ldi RxData.state, STATE_READ_TRACK
         jmp r17
 
+/****************************************************************************************************************/
+/*      fn_readTrack                                                                                            */
+/*                                                                                                              */
+/****************************************************************************************************************/
 fn_readTrack:
         lbbo RxStatus.trackLen, RxData.pruMem, OFFSET(RxStatus.trackLen), SIZE(RxStatus.trackLen)
         lsr  RxStatus.trackLen, RxStatus.trackLen, #2      // trackLen / 4 = Number of DWORDS
@@ -201,60 +205,71 @@ fn_readTrack:
 
 rd_time_to_low:
         xor RxData.timer, RxData.timer, RxData.timer
+
+        and  r19, r17, r17
+        jal  r17, fn_waitForHi
+        and  r17, r19, r19
+
 rd_timer:
         add  RxData.timer, RxData.timer, #1
-        lbbo RxStatus.trigger, RxData.pruMem, OFFSET(RxStatus.trigger), SIZE(RxStatus.trigger)
+        lbbo RxStatus.trigger, RxData.pruMem, \
+                        OFFSET(RxStatus.trigger), \
+                        SIZE(RxStatus.trigger)
         QBEQ END, RxStatus.trigger, STATUS_TRIGGER_QUIT
         QBBS rd_timer, PIN_READ_DATA
-
+        
         QBGT rd_short, RxData.timer, #140   // timer < 140
         QBGT rd_med,   RxData.timer, #190   // timer < 190 
 rd_long:
         // 0b0001 - 4 bits
-        add RxData.bitCount, RxData.bitCount, #1
-        ldi RxData.bitRemain, #3
+        ldi  RxData.bitRemain, #3
         lsl  RxData.dword, RxData.dword, 1
+        add  RxData.bitCount, RxData.bitCount, #1
         QBEQ got_dword, RxData.bitCount, 32
 rd_med:
         // 0b001 - 3 bits
-        add RxData.bitCount, RxData.bitCount, #1
-        ldi RxData.bitRemain, #2
+        ldi  RxData.bitRemain, #2
         lsl  RxData.dword, RxData.dword, 1
+        add  RxData.bitCount, RxData.bitCount, #1
         QBEQ got_dword, RxData.bitCount, 32
 rd_short:
         // 0b01 - 2 bits
-        add RxData.bitCount, RxData.bitCount, #1
-        ldi RxData.bitRemain, #1
+        ldi  RxData.bitRemain, #1
         lsl  RxData.dword, RxData.dword, 1
+        add  RxData.bitCount, RxData.bitCount, #1
         QBEQ got_dword, RxData.bitCount, 32
 
-        add RxData.bitCount, RxData.bitCount, #1
-        ldi RxData.bitRemain, #0
+        ldi  RxData.bitRemain, #0
         lsl  RxData.dword, RxData.dword, 1
         or   RxData.dword, RxData.dword, 1
+        add  RxData.bitCount, RxData.bitCount, #1
         QBEQ got_dword, RxData.bitCount, 32
 
-        and r19, r17, r17
-        jal r17, fn_waitForHi
-        and r17, r19, r19
-        jmp rd_time_to_low
+        jmp  rd_time_to_low
 
 got_dword:
-        sbbo RxData.dword, RxData.sharedMem, RxData.dwordIndex, SIZE(RxData.dword)
-        add RxData.dwordIndex, RxData.dwordIndex, SIZE(RxData.dword)
-        add r20, r20, #1                // Inc dword counter
 
-        xor RxData.dword, RxData.dword, RxData.dword
-        xor RxData.bitCount, RxData.bitCount, RxData.bitCount
+        SET  PIN_DEBUG
+        sbbo RxData.dword, RxData.sharedMem, RxData.dwordIndex, SIZE(RxData.dword)
+        add  RxData.dwordIndex, RxData.dwordIndex, SIZE(RxData.dword)
+        add  r20, r20, #1                // Inc dword counter
+
+        xor  RxData.dword, RxData.dword, RxData.dword
+        xor  RxData.bitCount, RxData.bitCount, RxData.bitCount
         
         // Pass remaining bits on to next DWORD
         qbeq finalize, RxData.bitRemain, #0
-        and  RxData.bitCount, RxData.bitCount, RxData.bitRemain
+        and  RxData.bitCount, RxData.bitRemain, RxData.bitRemain
         or   RxData.dword, RxData.dword, #1
         
 finalize: 
+        CLR  PIN_DEBUG
+        // Check if we have received all bytes
         qble rd_time_to_low, RxStatus.trackLen, r20   // branch if r20 <= RxStatus.trackLen
 
-        ldi RxData.state, STATE_DONE
+        // Inform the client that we have all bytes
+        ldi RxStatus.server, STATUS_SERVER_GOT_TRACK
+        sbbo RxStatus.server, RxData.pruMem, OFFSET(RxStatus.server), SIZE(RxStatus.server)
+        MOV r31.b0, PRU0_ARM_INTERRUPT+16
         jmp r17
 
