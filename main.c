@@ -762,8 +762,10 @@ int main(int argc, char **argv)
 {
 	int i, e;
 	const struct modes *m = modes;
+	int mod_argv_size = 0;
 	int mod_argc = argc;
 	char ** mod_argv;
+	char *mod_argv_data;
 	char *arg;
 
 	if (argc == 1) {
@@ -792,17 +794,23 @@ int main(int argc, char **argv)
 	// Remove the mode argument from argv,
 	// and pass mod_argv to the handler functions
 	mod_argc -= 1;
-	for(i=0, e=0; i<argc; i++) {
-		if (i == 1) continue;
-		arg = malloc(strlen(argv[i] + 1));
-		if (!arg) {
-			fprintf(stderr, "fatal: "
+	for(i=0; i < argc; i++) {
+		mod_argv_size += strlen(argv[i]) + 1;
+	}
+	mod_argv_data = malloc(mod_argv_size);
+	if (!mod_argv_data) {
+		fprintf(stderr, "fatal: "
 				"Failed to allocate memory for argument\n");
-			exit(1);
-		}
+		exit(1);
+	}
+	arg = mod_argv_data;
+	for (i = 0, e = 0; i < argc; i++) {
+		if (i == 1) continue;
 		strcpy(arg, argv[i]);
 		mod_argv[e++] = arg;
+		arg += strlen(argv[i]) + 1;
 	}
+
 
 	pru = pru_setup();
 	if (!pru)
@@ -811,10 +819,9 @@ int main(int argc, char **argv)
         signal(SIGINT, int_handler);
 
 	m->init(mod_argc, mod_argv);
-	for(i=0; i<argc; i++) {
-		free(mod_argv[i]);
-	}
+
 	free(mod_argv);
+	free(mod_argv_data);
 
 	pru_exit(pru);
 

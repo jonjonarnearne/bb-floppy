@@ -144,13 +144,14 @@ static int find_std_sector_headers(const uint16_t *timing, int sample_count,
 	return header_count;
 }
 
-static void measure_samples(uint16_t * samples, int sample_count)
+static void measure_samples(const uint16_t * samples, int sample_count)
 {
         int i;
         int brackets[9] = {0};
         int bracket_count[9] = {0};
 
         for(i=0; i<sample_count; i++) {
+		// 01 
                 if (samples[i] < 107) {
                         brackets[0] += samples[i];
                         bracket_count[0]++;
@@ -160,6 +161,7 @@ static void measure_samples(uint16_t * samples, int sample_count)
                 } else if (samples[i] < 140) {
                         brackets[2] += samples[i];
                         bracket_count[2]++;
+		// 001
                 } else if (samples[i] < 175) {
                         brackets[3] += samples[i];
                         bracket_count[3]++;
@@ -169,6 +171,7 @@ static void measure_samples(uint16_t * samples, int sample_count)
                 } else if (samples[i] < 200) {
                         brackets[5] += samples[i];
                         bracket_count[5]++;
+		// 0001
                 } else if (samples[i] < 235) {
                         brackets[6] += samples[i];
                         bracket_count[6]++;
@@ -215,10 +218,32 @@ static void measure_samples(uint16_t * samples, int sample_count)
                                   + bracket_count[8]);
 }
 
+static const uint16_t q_limits[] = { 108, 114, 140,
+				     175, 185, 200,
+				     236, 255,   0 };
+static const uint16_t q_values[] = { 105, 110, 117,
+				     168, 178, 189,
+				     232, 245, 259 };
+static void quantize_samples(uint16_t * samples, int sample_count)
+{
+	int i,e;
+	const uint16_t *lim;
+	for (i = 0; i < sample_count; i++) {
+		lim = q_limits;
+		e = 0;
+		while(*lim) {
+			if (samples[i] < *lim) break;
+			e++;
+			lim++;
+		}
+		samples[i] = q_values[e];
+	}
+}
+
 int read_track_timing(int argc, char ** argv)
 {
-	int rc, i, opt, sample_count, measure = 0;
-	char *filename = NULL;
+	int rc, i, opt, sample_count, measure = 0, quantize = 0;
+	const char *filename = NULL;
 	FILE *fp;
         uint16_t *timing = NULL;
 	enum pru_head_side track_side = PRU_HEAD_UPPER;
@@ -230,7 +255,7 @@ int read_track_timing(int argc, char ** argv)
                 return 0;
         }
 
-	while((opt = getopt(argc, argv, "-lM")) != -1) {
+	while((opt = getopt(argc, argv, "-lMQ")) != -1) {
 		switch(opt) {
 		case 'l':
 			track_side = PRU_HEAD_LOWER;
@@ -238,10 +263,13 @@ int read_track_timing(int argc, char ** argv)
 		case 'M':
 			measure = 1;
 			break;
+		case 'Q':
+			quantize = 1;
+			break;
 		case 1:
 			// If you specify a filename,
                         // we will save the data to that file.
-			filename = optarg;
+			filename = argv[optind-1]; //optarg;
 			printf("Filename detected: %s\n", filename);
 		}
 	}
@@ -256,6 +284,10 @@ int read_track_timing(int argc, char ** argv)
         if (measure) {
                 measure_samples(timing, sample_count);
         }
+	if (quantize) {
+		printf("Quantize!\n");
+                quantize_samples(timing, sample_count);
+	}
 
 	rc = find_std_sector_headers(timing, sample_count, header, 11);
 	printf("got %d headers\n", rc);
