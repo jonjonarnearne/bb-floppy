@@ -362,8 +362,8 @@ int init_read_track(int argc, char ** argv)
                         sync_set++;
                         break;
 		case 1:
-			printf("Filename detected!\n");
 			filename = optarg;
+			printf("Filename detected: %s\n", filename);
                         break;
                 default:
                         rc = -1;

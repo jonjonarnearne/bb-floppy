@@ -352,12 +352,12 @@ rs_time_to_lo:
 rs_time_to_lo_fast:
         rclr read_sector.timer
 rs_timer:
-        M_CHECK_ABORT
+        M_CHECK_ABORT                                           //20 ns
         inc  read_sector.timer
         qbbs rs_timer, PIN_READ_DATA 
 
-        qbgt rs_short, read_sector.timer, #140//#140       // timer < 140
-        qbgt rs_med, read_sector.timer, #198  //#198       // timer < 190
+        qbgt rs_short, read_sector.timer, #140                  //#140 * 30 = 4200 ns 4.2us       // timer < 140
+        qbgt rs_med, read_sector.timer, #207                    //#190 * 30 = 5700 ns 5.7ns || 207 * 30 = 6210 ns      // timer < 190
 
 rs_long:
         ldi  read_sector.bit_remain, #3
