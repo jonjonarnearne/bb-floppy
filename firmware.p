@@ -24,6 +24,7 @@
 #define PIN_UNUSED              r31.t14 // P8.16
 
 #define SYNC_WORD               0x4489
+#define SECTOR_LEN_WORD         0x1900
 
 .macro  rclr
 .mparam reg
@@ -47,8 +48,9 @@
 .endm
 .struct GREGS
         .u32  pruMem
+        .u32  sharedMem
 .ends
-.assign GREGS, r0, r0, GLOBAL
+.assign GREGS, r0, r1, GLOBAL
 .struct SREGS
         .u32  ret_addr
 .ends
@@ -59,7 +61,12 @@ START:
         clr  r0.t4           // CLR Bit 4 -- Enable OCP master ports
         sbco r0, C4, 4, 4    // Store 4 bytes of memory to C4 + 4 (SYSCFG_REG)
 
-        xor  GLOBAL.pruMem, GLOBAL.pruMem, GLOBAL.pruMem
+        // pruMem addr = 0x00000000
+        rclr GLOBAL.pruMem
+        // sharedMem addr = 0x00010000
+        rclr GLOBAL.sharedMem
+        ldi  GLOBAL.sharedMem.w2, 0x0001
+
         // SET_DEFAULT_PIN_STATE - All OUTPUTS HI, DEBUG PIN LO
         ldi  r30.w0, 0x005f
 
@@ -111,6 +118,7 @@ READ_SECTOR:
         jal  STACK.ret_addr, fnWait_For_Hi
         jal  STACK.ret_addr, fnWait_For_Lo
         jal  STACK.ret_addr, fnFind_Sync
+        jal  STACK.ret_addr, fnRead_Sector
         set  PIN_DRIVE_ENABLE_MOTOR
 
         and  interface.command, interface.command, 0x7f
@@ -190,7 +198,84 @@ short:
 found_sync:
         rcp  STACK.ret_addr, find_sync.ret_addr
         jmp  STACK.ret_addr
-
 .leave find_sync_scope
+
+.struct Read_Sector
+        .u8   bit_remain
+        .u8   bit_count
+        .u16  timer
+        .u16  dword_count
+        .u16  ram_offset
+        .u32  cur_dword
+        .u32  ret_addr
+        .u32  sector_len
+.ends
+.enter read_sector_scope
+.assign Read_Sector, r20, r24, read_sector
+fnRead_Sector:
+        rcp  read_sector.ret_addr, STACK.ret_addr
+
+        rclr read_sector.bit_count
+        rclr read_sector.dword_count
+        rclr read_sector.cur_dword
+        rclr read_sector.ram_offset
+        ldi  read_sector.sector_len, SECTOR_LEN_WORD
+        lsr  read_sector.sector_len, read_sector.sector_len, #2  // sector_len / 4 == Convert from bytes to DWORDS
+
+rs_time_to_lo:
+        rclr read_sector.timer
+        jal  STACK.ret_addr, fnWait_For_Hi
+rs_timer:
+        M_CHECK_ABORT
+        inc  read_sector.timer
+        qbbs rs_timer, PIN_READ_DATA 
+
+        qbgt rs_short, read_sector.timer, #140       // timer < 140
+        qbgt rs_med, read_sector.timer, #190       // timer < 190
+
+rs_long:
+        ldi  read_sector.bit_remain, #3
+        lsl  read_sector.cur_dword, read_sector.cur_dword, #1
+        inc  read_sector.bit_count
+        qbeq got_dword, read_sector.bit_count, (SIZE(read_sector.cur_dword) * 8)
+rs_med:
+        ldi  read_sector.bit_remain, #2
+        lsl  read_sector.cur_dword, read_sector.cur_dword, #1
+        inc  read_sector.bit_count
+        qbeq got_dword, read_sector.bit_count, (SIZE(read_sector.cur_dword) * 8)
+rs_short:
+        ldi  read_sector.bit_remain, #1
+        lsl  read_sector.cur_dword, read_sector.cur_dword, #1
+        inc  read_sector.bit_count
+        qbeq got_dword, read_sector.bit_count, (SIZE(read_sector.cur_dword) * 8)
+
+        ldi  read_sector.bit_remain, #0
+        lsl  read_sector.cur_dword, read_sector.cur_dword, #1
+        or   read_sector.cur_dword, read_sector.cur_dword, #1
+        inc  read_sector.bit_count
+        qbeq got_dword, read_sector.bit_count, (SIZE(read_sector.cur_dword) * 8)
+
+        // We haven't got a complete DWORD yet
+        jmp  rs_time_to_lo
+
+got_dword:
+        sbbo read_sector.cur_dword, GLOBAL.sharedMem, read_sector.ram_offset, SIZE(read_sector.cur_dword)
+        add  read_sector.ram_offset, read_sector.ram_offset, SIZE(read_sector.cur_dword)
+        inc  read_sector.dword_count
+
+        rclr read_sector.cur_dword
+        rclr read_sector.bit_count
+
+        qbeq no_bits_remain, read_sector.bit_remain, #0
+        // Pass remaining bits to next DWORD
+        rcp  read_sector.bit_count, read_sector.bit_remain
+        or   read_sector.cur_dword, read_sector.cur_dword, #1
+no_bits_remain:
+        qble rs_time_to_lo, read_sector.sector_len, read_sector.dword_count // dword_count <= sector_len
+
+        rcp  STACK.ret_addr, read_sector.ret_addr
+        jmp  STACK.ret_addr
+.leave read_sector_scope
+        
 
 

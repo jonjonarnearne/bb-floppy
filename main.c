@@ -249,13 +249,11 @@ int main(int argc, char **argv)
 
         signal(SIGINT, int_handler);
 
-	pru_start_motor(pru);
-	sleep(2);
-	pru_stop_motor(pru);
-	sleep(2);
         pru_read_sector(pru);
+        // The firmware is hardcoded to read 0x1900 bytes...
+        // We only read one sector!
+        decode_track(pru->shared_ram, 0x1900, 1);
 
-        printf("Read Sector!\n");
 	pru_exit(pru);
 
 	exit(0);
