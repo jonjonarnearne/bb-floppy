@@ -87,14 +87,17 @@ struct mfm_sector {
 
 #define print_sector_info(info) do { \
 	printf("0x%08x: Format magic: 0x%02x, Cylinder Number: %u, Head: %s, sector_number: %2d - until end: %2d\n", \
-                        info, \
-                        (info & 0xff000000) >> 24, \
-                        ((info & 0x00ff0000) >> 16) >> 1, \
-                        (((info & 0x00ff0000) >> 16) & 0x1) ? "LOWER" : "UPPER", \
-                        (info & 0x0000ff00) >> 8, \
-                        (info & 0x000000ff)); \
+                        info,								\
+                        (info & 0x000000ff),						\
+                        ((info & 0x0000ff00) >> 8) >> 1,				\
+                        (((info & 0x0000ff00) >> 8) & 0x1) ? "LOWER" : "UPPER",		\
+                        (info & 0x00ff0000) >> 16,					\
+                        (info & 0xff000000) >> 24);					\
 } while(0)
 
+#define MFM_MASK 0xaaaaaaaa
+// MASK = 0x55     | EVEN_BITS | DATA
+// MFM_MASK = 0xaa | ODD_BITS  | CLOCK
 unsigned int decode_mfm_sector(unsigned char *buf, int mfm_sector_len, uint8_t *data_buf)
 {
         unsigned int info;
@@ -146,9 +149,6 @@ unsigned int decode_mfm_sector(unsigned char *buf, int mfm_sector_len, uint8_t *
         return info;
 }
 
-#define MFM_MASK 0xaaaaaaaa
-// MASK = 0x55     | EVEN_BITS | DATA
-// MFM_MASK = 0xaa | ODD_BITS  | CLOCK
 uint32_t encode_data(void *in_buf, void *out_buf_odd, void *out_buf_even)
 {
 	uint32_t *input = in_buf;
@@ -220,17 +220,17 @@ static struct pru * pru;
  * If we read an entire track,
  * we might have to sync to the sync byte for successive sectors
  */
-static void decode_track(uint8_t * volatile p_ram, uint8_t *mfm_track, uint8_t *data_track)
+static void decode_track(void * p_ram, uint8_t *mfm_track, uint8_t *data_track)
 {
 	unsigned int info, i, e, shifts, dwords_len;
-        uint8_t * volatile ram;
-        uint32_t * volatile dwords;
-        uint32_t mask = 0;
+	unsigned char * ram;
+	uint32_t * volatile dwords;
+	uint32_t mask = 0;
 	uint8_t data[512];
-        uint8_t *mfm_sectors = mfm_track;
+	uint8_t *mfm_sectors = mfm_track;
 	uint8_t *data_sectors = data_track;
 
-        ram = p_ram;
+        ram = p_ram + 8;
 
         for (e = 0; e<11; e++) {
                 info = decode_mfm_sector(ram, 1080, data);
@@ -248,8 +248,8 @@ static void decode_track(uint8_t * volatile p_ram, uint8_t *mfm_track, uint8_t *
                 // Check if we can read the sync word,
                 // else we must shift the rest of ram left
                 mask = 0;
-                for(i=0; i<24; i++) {
-                        if (dwords[1] == 0x44894489)
+                for(i=0; i<24; i++) { 
+                        if (dwords[1] == 0x89448944)
                                 break;
 
                         mask <<= 0x01;
@@ -263,7 +263,7 @@ static void decode_track(uint8_t * volatile p_ram, uint8_t *mfm_track, uint8_t *
 
                         dwords[2] <<= 1;
                 }
-                if (dwords[1] != 0x44894489) {
+                if (dwords[1] != 0x89448944) {
                         // We try to correct up to 24 bits - then give up
                         printf("Couldn't sync data. Exit\n");
                         break;
@@ -302,26 +302,30 @@ int init_test(int argc, char ** argv)
 	return 0;
 }
 
+/* Read an entire disk into MFM format.
+ * The data we write out, will be a big endian clone of the mfm data on the disk
+ */
+
 int init_read(int argc, char ** argv)
 {
         FILE *fp;
 	int i;
-	uint8_t *mfm_track, *mfm_disk, *data_track, *data_disk;
+	unsigned char *mfm_track, *mfm_disk, *data_track, *data_disk;
 	char filename[255];
 	if (argc != 3) {
 		fprintf(stderr, "You must specify a filename\n");
 		return -1;
 	}
 
-	mfm_disk = malloc((1080 * 11 * 2 * 80) + (512 * 11 * 2 * 80));
+	mfm_disk = malloc(RAW_MFM_TRACK_SIZE 
+				* TRACKS_PER_CYLINDER
+				* CYLINDERS_PER_DISK);
 	if (!mfm_disk) {
 		fprintf(stderr, "Failed to alloc memory!\n");
 		return -1;
 	}
 
 	mfm_track = mfm_disk;
-	data_disk = mfm_disk + (1080 * 11 * 2 * 80);
-	data_track = data_disk;
 
         pru_start_motor(pru);
 	pru_reset_drive(pru);
@@ -330,16 +334,14 @@ int init_read(int argc, char ** argv)
 	for (i=0; i<80; i++) {
 		printf("\nTrack: %d\n", i);
                 pru_set_head_side(pru, PRU_HEAD_UPPER);
-		pru_read_track(pru);	
-                decode_track(pru->shared_ram, mfm_track, data_track);
-		mfm_track += (1080 * 11);
-		data_track += (512 * 11);
+		pru_read_track(pru, mfm_track);	
+                decode_track(pru->shared_ram, mfm_track, NULL);
+		mfm_track += RAW_MFM_TRACK_SIZE;
                 pru_set_head_side(pru, PRU_HEAD_LOWER);
-		pru_read_track(pru);
-                decode_track(pru->shared_ram, mfm_track, data_track);
-		mfm_track += (1080 * 11);
-		data_track += (512 * 11);
-		if (i < 79) 
+		pru_read_track(pru, mfm_track);
+                decode_track(pru->shared_ram, mfm_track, NULL);
+		mfm_track += RAW_MFM_TRACK_SIZE;
+		if (i < CYLINDERS_PER_DISK - 1) 
 			pru_step_head(pru, 1);
 	}
         pru_stop_motor(pru);
@@ -348,10 +350,6 @@ int init_read(int argc, char ** argv)
 	fp = fopen(filename, "w");
 	fwrite(mfm_disk, 1080, 11 * 2 * 80, fp);
 	fclose(fp);
-	snprintf(filename, 255, "%s.adf", argv[2]);
-	fp = fopen(filename, "w");
-	fwrite(data_disk, 512, 11 * 2 * 80, fp);
-	fclose(fp);
 
 	free(mfm_disk);
 	return 0;
@@ -359,16 +357,49 @@ int init_read(int argc, char ** argv)
 
 int init_read_track(int argc, char ** argv)
 {
-        uint8_t *mfm_track = malloc(1080 * 11);
-        uint8_t *data_track = malloc(512 * 11);
+	FILE *fp;
+	char filename[255];
+	unsigned char *mfm_track = malloc(RAW_MFM_TRACK_SIZE);
+	if (!mfm_track)
+		return -1;
+
 	pru_start_motor(pru);
-	pru_read_track(pru);
+	pru_read_track(pru, mfm_track);
 	pru_stop_motor(pru);
 
-        hexdump(pru->shared_ram, 8);
-        decode_track(pru->shared_ram, mfm_track, data_track);
+	decode_track(mfm_track, NULL, NULL);
+
+	if (argc == 3) {
+		snprintf(filename, 255, "%s.mfm_track", argv[2]);
+		fp = fopen(filename, "w");
+		fwrite(mfm_track, 1, RAW_MFM_TRACK_SIZE, fp);
+		fclose(fp);
+	}
         free(mfm_track);
-        free(data_track);
+
+	return 0;
+}
+
+int init_write_track(int argc, char ** argv)
+{
+	FILE *fp;
+        unsigned char *mfm_track;
+	if (argc != 3) {
+		usage();
+		fprintf(stderr, "You must specify a filename\n");
+		return -1;
+	}
+
+	mfm_track = malloc(RAW_MFM_TRACK_SIZE);
+	if (!mfm_track)
+		return -1;
+
+	fp = fopen(argv[2], "r");
+	fread(mfm_track, 1, RAW_MFM_TRACK_SIZE, fp);
+	fclose(fp);
+
+	pru_write_track(pru, mfm_track);
+        free(mfm_track);
 
 	return 0;
 }
@@ -385,7 +416,7 @@ int init_read_sector(int argc, char ** argv)
 
         hexdump(pru->shared_ram, 16);
 
-	sector_info = decode_mfm_sector(pru->shared_ram, MFM_TRACK_LEN, data);
+	sector_info = decode_mfm_sector(pru->shared_ram + 8, RAW_MFM_SECTOR_SIZE, data);
 	print_sector_info(sector_info);
 
 	return 0;
@@ -427,19 +458,13 @@ static void set_mfm_clock(void * data, size_t len)
         }
 }
 
-#define RAW_MFM_SECTOR_DATA_SIZE 1024
-#define RAW_MFM_SECTOR_HEAD_SIZE 56
-#define RAW_MFM_SECTOR_MARKER_SIZE 8
-#define RAW_MFM_SECTOR_SIZE (RAW_MFM_SECTOR_MARKER_SIZE \
-                           + RAW_MFM_SECTOR_HEAD_SIZE \
-                           + RAW_MFM_SECTOR_DATA_SIZE)
-
 int init_erase_track(int argc, char ** argv)
 {
 	pru_erase_track(pru);
         return 0;
 }
 
+#if 0
 int init_write_track(int argc, char ** argv)
 {
 	int i;
@@ -469,6 +494,7 @@ int init_write_track(int argc, char ** argv)
 
 	return 0;
 }
+#endif
 
 
 int init_identify(int argc, char ** argv)
@@ -482,7 +508,7 @@ int init_identify(int argc, char ** argv)
 
         pru_start_motor(pru);
         pru_read_sector(pru);
-	sector_info = decode_mfm_sector(pru->shared_ram, MFM_TRACK_LEN, NULL);
+	sector_info = decode_mfm_sector(pru->shared_ram + 8, RAW_MFM_SECTOR_SIZE, NULL);
 	cur_cyl = ((sector_info & 0x00ff0000) >> 16) >> 1;
         
         if (cur_cyl != target_cyl) {

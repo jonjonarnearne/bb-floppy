@@ -255,31 +255,58 @@ found_sync:
         jmp  STACK.ret_addr
 .leave find_sync_scope
 
+/* The disk is encoded in big endian format.
+ * We are reading one 32bit DWORD at a time, and when we are storing this to the pru memory,
+ * the bytes are swapped into little endian mode.
+ * So data on disk looks like this:
+ *
+ * 0x11 0x22 0x33 0x44 0x55 0x66 0x77 0x88
+ *
+ * The data in ram will look like this:
+ *
+ * 0x44 0x33 0x22 0x11 0x88 0x77 0x66 0x55
+ *
+ * We expect the bytes to be flipped back before processing on the ARM CPU
+ */
 .struct Read_Sector
         .u8   bit_remain
         .u8   bit_count
         .u16  timer
-        .u16  dword_count
-        .u16  ram_offset
+        .u16  dword_count       // Dwords, currently read
+        .u16  ram_offset        // Position of write pointer
         .u32  cur_dword
         .u32  ret_addr
-        .u32  sector_len
+        .u32  sector_len        // Number of dwords to read
 .ends
 .enter read_sector_scope
 .assign Read_Sector, r21, r25, read_sector
 fnRead_Sector:
         rcp  read_sector.ret_addr, STACK.ret_addr
 
-        rclr read_sector.bit_count
         rclr read_sector.dword_count
-        rclr read_sector.cur_dword
         rclr read_sector.ram_offset
 
-        // If interface.argument is 14,
+        // Set the first two dwords to 0xaaaaaaaa 0x44894489
+        ldi  read_sector.cur_dword.w0, 0xaaaa
+        ldi  read_sector.cur_dword.w2, 0xaaaa
+        sbbo read_sector.cur_dword, GLOBAL.sharedMem, read_sector.ram_offset, SIZE(read_sector.cur_dword)
+        add  read_sector.ram_offset, read_sector.ram_offset, SIZE(read_sector.cur_dword)
+        inc  read_sector.dword_count
+
+        ldi  read_sector.cur_dword.w0, SYNC_WORD
+        ldi  read_sector.cur_dword.w2, SYNC_WORD
+        sbbo read_sector.cur_dword, GLOBAL.sharedMem, read_sector.ram_offset, SIZE(read_sector.cur_dword)
+        add  read_sector.ram_offset, read_sector.ram_offset, SIZE(read_sector.cur_dword)
+        inc  read_sector.dword_count
+
+        rclr read_sector.cur_dword
+        rclr read_sector.bit_count
+
+        // If interface.argument is 16,
         // we read the sector head.
         // If sector head info says that we are on start of sectors,
         // We read the entire track
-        // Else, just read the amount of dwords specified
+        // Else if argument != 16, just read the amount of dwords specified
         rcp  read_sector.sector_len, interface.argument
 
 rs_time_to_lo:
@@ -337,7 +364,7 @@ no_bits_remain:
         // Mark the sector read done,
         // if we are not trying to read whole track!
         ldi  GLOBAL.sector_offset, #0xff
-        qbne read_sector_done, read_sector.sector_len, #14
+        qbne read_sector_done, read_sector.sector_len, #16
         // Exit this function here if have read more than the SECTOR_HEAD
         
         // We have only read the head, now check if we should continue reading
@@ -347,7 +374,7 @@ no_bits_remain:
         qbne read_sector_done, GLOBAL.sector_offset, SECT_OFST
 
         // Setup read counter to read rest of track
-        ldi  read_sector.sector_len, #(0x3000/4) - 14
+        ldi  read_sector.sector_len, #(0x3000/4) - 16
         // Now jump up to read rest of track
         jmp rs_time_to_lo
 
@@ -357,6 +384,8 @@ read_sector_done:
 
 // This is a helper function, so we keep scope of read_sector
 .struct MFM_HEADER
+        .u32  NULL
+        .u32  SYNC
         .u32  odd_info
         .u32  even_info
         .u32  odd_label0
@@ -375,8 +404,8 @@ read_sector_done:
         .u32  chksum
 .ends
 .enter get_sector_offset_scope
-.assign MFM_HEADER, r9, r20, mfm_header
-.assign Get_Sector_Offset, r7, r8, get_sector_offset
+.assign MFM_HEADER, r7, r20, mfm_header
+.assign Get_Sector_Offset, r4, r5, get_sector_offset
 fnGet_Sector_Offset:
         ldi  get_sector_offset.MASK.w0, 0x5555
         ldi  get_sector_offset.MASK.w2, 0x5555

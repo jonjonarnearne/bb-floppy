@@ -179,21 +179,32 @@ void pru_read_sector(struct pru * pru)
 	return;
 }
 
-void pru_read_track(struct pru * pru)
+void pru_read_track(struct pru * pru, void * data)
 {
+        int i;
+        unsigned int *dest = data;
+        unsigned int * volatile source = (unsigned int * volatile)pru->shared_ram;
+
 	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
         if (!pru->running) return;
 
         // IMPORTANT: SET ARGUMENT BEFORE WE SET THE COMMAND!
         // The argument is number of dwords
-        // 14 eq. just read the head. Wait for correct sector,
+        // 16 eq. just read the head. Wait for correct sector,
         // then read entire track!
-	intf->argument = 14;
+        memset(pru->shared_ram, 0xaa, 0x3000);
+
+	intf->argument = 16;
 	intf->command = COMMAND_READ_SECTOR;
         prussdrv_pru_wait_event(PRU_EVTOUT_0);
         prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
+
 	if (intf->command != (COMMAND_READ_SECTOR & 0x7f))
                 printf("Got wrong Ack: 0x%02x\n", intf->command);
+
+        for(i=0; i < RAW_MFM_TRACK_SIZE/sizeof(*dest); i++) {
+                dest[i] = htobe32(source[i]);
+        }
 
 	return;
 }
@@ -210,10 +221,19 @@ void pru_erase_track(struct pru * pru)
                 printf("Got wrong Ack: 0x%02x\n", intf->command);
 }
 
-void pru_write_track(struct pru * pru, void *track)
+void pru_write_track(struct pru * pru, void * data)
 {
+        int i;
+        unsigned int *source = data;
+        unsigned int * volatile dest = (unsigned int * volatile)pru->shared_ram;
+
 	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
         if (!pru->running) return;
+
+        memset(pru->shared_ram, 0xaa, 0x3000);
+        for(i=0; i < RAW_MFM_TRACK_SIZE/sizeof(*dest); i++) {
+                dest[i] = be32toh(source[i]);
+        }
 
 	intf->command = COMMAND_WRITE_TRACK;
         prussdrv_pru_wait_event(PRU_EVTOUT_0);
