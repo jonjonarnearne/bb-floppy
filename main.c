@@ -310,7 +310,7 @@ int init_read(int argc, char ** argv)
 {
         FILE *fp;
 	int i;
-	unsigned char *mfm_track, *mfm_disk, *data_track, *data_disk;
+	unsigned char *mfm_track, *mfm_disk;
 	char filename[255];
 	if (argc != 3) {
 		fprintf(stderr, "You must specify a filename\n");
@@ -334,12 +334,15 @@ int init_read(int argc, char ** argv)
 	for (i=0; i<80; i++) {
 		printf("\nTrack: %d\n", i);
                 pru_set_head_side(pru, PRU_HEAD_UPPER);
+
 		pru_read_track(pru, mfm_track);	
-                decode_track(pru->shared_ram, mfm_track, NULL);
+                decode_track(mfm_track, NULL, NULL);
 		mfm_track += RAW_MFM_TRACK_SIZE;
+
                 pru_set_head_side(pru, PRU_HEAD_LOWER);
+
 		pru_read_track(pru, mfm_track);
-                decode_track(pru->shared_ram, mfm_track, NULL);
+                decode_track(mfm_track, NULL, NULL);
 		mfm_track += RAW_MFM_TRACK_SIZE;
 		if (i < CYLINDERS_PER_DISK - 1) 
 			pru_step_head(pru, 1);
@@ -348,7 +351,9 @@ int init_read(int argc, char ** argv)
 
 	snprintf(filename, 255, "%s.mfm", argv[2]);
 	fp = fopen(filename, "w");
-	fwrite(mfm_disk, 1080, 11 * 2 * 80, fp);
+	fwrite(mfm_disk, 1, RAW_MFM_TRACK_SIZE 
+				* TRACKS_PER_CYLINDER
+				* CYLINDERS_PER_DISK, fp);
 	fclose(fp);
 
 	free(mfm_disk);
