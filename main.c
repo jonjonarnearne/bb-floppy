@@ -333,7 +333,7 @@ int init_read(int argc, char ** argv)
 
 int init_read_track(int argc, char ** argv)
 {
-        int rc = -1;
+        int track_len, rc = -1;
 	enum pru_head_side track_side = PRU_HEAD_UPPER;
 	char *filename = NULL;
 	int opt, special_sync = 0, sync_set = 0;
@@ -395,15 +395,21 @@ int init_read_track(int argc, char ** argv)
 
 	pru_stop_motor(pru);
 
-        if (!special_sync)
+        if (!special_sync) {
 	        decode_track(mfm_track, NULL, NULL);
-        else
-                hexdump(mfm_track, 0x3200);
+		track_len = RAW_MFM_TRACK_SIZE;
+	} else {
+                //hexdump(mfm_track, 64);
+		//hexdump(mfm_track + 0x3000, 0x200);
+		hexdump(mfm_track, 0x3200);
+		track_len = 0x3200;
+	}
+		
 
 
 	if (filename) {
 		fp = fopen(filename, "w");
-		fwrite(mfm_track, 1, RAW_MFM_TRACK_SIZE, fp);
+		fwrite(mfm_track, 1, track_len, fp);
 		fclose(fp);
 	}
 
