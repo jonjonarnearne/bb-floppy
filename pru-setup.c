@@ -14,6 +14,32 @@
 extern char _firmware_size[]		asm("_binary_firmware_bin_size");
 extern unsigned int firmware_data[]	asm("_binary_firmware_bin_start");
 
+void hexdump(const void *b, size_t len)
+{
+    int i;
+    const uint8_t *buf = b;
+    char str[17];
+    char *c = str;
+
+    for (i=0; i < len; i++) {
+        if (i && !(i % 16)) {
+            *c = '\0';
+            printf("%s\n", str);
+            c = str;
+        }
+	if (!(i % 16))
+		printf("0x%04X: ", i);
+        *c++ = (*buf < 128 && *buf > 32) ? *buf : '.';
+        printf("%02x ", *buf++);
+    }
+
+    //if (!(i % 16))
+    //    return;
+
+    *c = '\0';
+    printf("%s\n", str);
+}
+
 struct pru * pru_setup(void)
 {
 	int rc;
@@ -189,11 +215,14 @@ void pru_read_sector(struct pru * pru, void * data)
 	return;
 }
 
-void pru_read_track(struct pru * pru, void * data)
+void pru_read_raw_track(struct pru * pru, void * data, uint32_t len,
+                enum pru_sync sync_type, uint32_t sync_dword)
 {
         int i;
+        unsigned char mul = 0;
         unsigned int *dest = data;
-        unsigned int * volatile source = (unsigned int * volatile)pru->shared_ram;
+        unsigned int * volatile source =
+                                (unsigned int * volatile)pru->shared_ram;
 
 	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
         if (!pru->running) return;
@@ -202,20 +231,65 @@ void pru_read_track(struct pru * pru, void * data)
         // The argument is number of dwords
         // 16 eq. just read the head. Wait for correct sector,
         // then read entire track!
-        memset(pru->shared_ram, 0xaa, 0x3000);
+        memset(pru->shared_ram, 0xff, 0x3000);
 
-	intf->argument = 16;
+        // Lemmings sync word BE
+        //ldi  find_sync.sync_word.w0, #0xaaaa
+        //ldi  find_sync.sync_word.w2, #0x912a
+        switch(sync_type) {
+        case PRU_SYNC_DEFAULT:
+                intf->sync_word = LE_SYNC_WORD | (LE_SYNC_WORD << 16);
+                break;
+        case PRU_SYNC_NONE:
+                intf->sync_word = 0x00000000;
+                break;
+        case PRU_SYNC_CUSTOM:
+                intf->sync_word = sync_dword;
+                break;
+        default:
+                fprintf(stderr, "fatal: Sync type not implemented!\n");
+                return;
+        }
+        if (len == 64) {
+	        intf->argument = 16;
+                len = 0x3000;
+        } else {
+	        intf->argument = len/4;
+        }
 	intf->command = COMMAND_READ_SECTOR;
-        prussdrv_pru_wait_event(PRU_EVTOUT_0);
-        prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
 
-	if (intf->command != (COMMAND_READ_SECTOR & 0x7f))
-                printf("Got wrong Ack: 0x%02x\n", intf->command);
+        while(1) {
+                prussdrv_pru_wait_event(PRU_EVTOUT_0);
+                prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
 
-        //for(i=0; i < RAW_MFM_TRACK_SIZE/sizeof(*dest); i++) {
-        for(i=0; i < 0x3000/sizeof(*dest); i++) {
+                // We read 0x1000 bytes at a time, from the 0x3000byte buffer
+                // jumping back and forth in sync with the PRU
+	        if (intf->command == COMMAND_READ_SECTOR) {
+                        for(i=0; i < 0x1000/sizeof(*dest); i++) {
+                                dest[i] = htobe32(source[i]);
+                        }
+                        dest += 0x1000/sizeof(*dest);
+                        len -= 0x1000;
+                        if (++mul & 0x1)
+                                source += 0x1000/sizeof(*dest);
+                        else
+                                source -= 0x1000/sizeof(*dest);
+                        printf("Read 0x1000\n");
+                } else if (intf->command == (COMMAND_READ_SECTOR & 0x7f)) {
+                        break;
+                } else {
+                        printf("Got wrong Ack: 0x%02x\n", intf->command);
+                        break;
+                }
+        }
+        for(i=0; i < len/sizeof(*dest); i++) {
                 dest[i] = htobe32(source[i]);
         }
+
+        //for(i=0; i < RAW_MFM_TRACK_SIZE/sizeof(*dest); i++) {
+        //for(i=0; i < 0x3000/sizeof(*dest); i++) {
+        //        dest[i] = htobe32(source[i]);
+        //}
 
 	return;
 }

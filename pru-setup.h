@@ -3,19 +3,27 @@
 
 //#define MFM_TRACK_LEN	 0x1900 //1080 //0x1900
 
-#define SECTORS_PER_TRACK 11
-#define TRACKS_PER_CYLINDER 2
-#define CYLINDERS_PER_DISK 80
+#define LE_SYNC_WORD            0x4489
+#define BE_SYNC_WORD            0x8944
+#define SECTORS_PER_TRACK       11
+#define TRACKS_PER_CYLINDER     2
+#define CYLINDERS_PER_DISK      80
 
-#define RAW_MFM_SECTOR_DATA_SIZE 1024
-#define RAW_MFM_SECTOR_HEAD_SIZE 56
-#define RAW_MFM_SECTOR_MARKER_SIZE 8
+#define RAW_MFM_SECTOR_DATA_SIZE        1024
+#define RAW_MFM_SECTOR_HEAD_SIZE        56
+#define RAW_MFM_SECTOR_MARKER_SIZE      8
 #define RAW_MFM_SECTOR_SIZE (RAW_MFM_SECTOR_MARKER_SIZE \
                            + RAW_MFM_SECTOR_HEAD_SIZE \
                            + RAW_MFM_SECTOR_DATA_SIZE)
 #define RAW_MFM_TRACK_SIZE (RAW_MFM_SECTOR_SIZE * SECTORS_PER_TRACK)
 
 
+enum pru_sync {
+        PRU_SYNC_DEFAULT,
+        PRU_SYNC_INDEX,
+        PRU_SYNC_NONE,
+        PRU_SYNC_CUSTOM
+};
 enum pru_head_dir {
 	PRU_HEAD_INC,
 	PRU_HEAD_DEC,
@@ -31,6 +39,8 @@ struct pru {
         int running;
 };
 
+void hexdump(const void *b, size_t len);
+
 struct pru * pru_setup(void);
 void stop_fw(struct pru * pru);
 void pru_exit(struct pru * pru);
@@ -42,7 +52,11 @@ void pru_stop_motor(struct pru * pru);
 
 void pru_find_sync(struct pru * pru);
 void pru_read_sector(struct pru * pru, void * data);
-void pru_read_track(struct pru * pru, void * data);
+void pru_read_raw_track(struct pru * pru, void * data, uint32_t len,
+                enum pru_sync sync_type, uint32_t sync_dword);
+#define pru_read_track(p, d) \
+        pru_read_raw_track(p, d, 64, PRU_SYNC_DEFAULT, 0)
+
 void pru_erase_track(struct pru * pru);
 void pru_write_track(struct pru * pru, void *track);
 

@@ -40,10 +40,19 @@
 .mparam reg
         add reg, reg, #1
 .endm
+.macro  inc4
+.mparam reg
+        add reg, reg, #4
+.endm
 
 .macro  dec
 .mparam reg
         sub reg, reg, #1
+.endm
+
+.macro  dec4
+.mparam reg
+        sub reg, reg, #4
 .endm
 
 // This macro takes 15 + 5 = 20ns
@@ -56,8 +65,10 @@
         .u32  pruMem
         .u32  sharedMem
         .u8   sector_offset
+        .u8   unused
+        .u16  unused1
 .ends
-.assign GREGS, r0, r2.b0, GLOBAL
+.assign GREGS, r0, r2, GLOBAL
 .struct SREGS
         .u32  ret_addr
 .ends
@@ -95,6 +106,7 @@ WAIT_FOR_COMMAND:
         qbeq RESET_DRIVE, interface.command, COMMAND_RESET_DRIVE
         qbeq WRITE_TRACK, interface.command, COMMAND_ERASE_TRACK
         qbeq WRITE_TRACK, interface.command, COMMAND_WRITE_TRACK
+        qbeq READ_TRACK, interface.command, COMMAND_READ_TRACK
 
         jmp  WAIT_FOR_COMMAND
 
@@ -157,6 +169,21 @@ FIND_SYNC:
         jal  STACK.ret_addr, fnFind_Sync
         jmp  SEND_ACK
 
+READ_TRACK:
+        //  We might try to read an entire track here.
+        jal  STACK.ret_addr, fnWait_For_Hi
+        jal  STACK.ret_addr, fnWait_For_Lo
+        jal  STACK.ret_addr, fnFind_Sync
+        jal  STACK.ret_addr, fnRead_Sector
+
+        // if the GLOBAL.sector_offset is 0xff,
+        // we eighter has a checksum error, or are not reading the entire track
+        qbeq SEND_ACK, GLOBAL.sector_offset, #0xff
+        // If the GLOBAL.sector_offset != SECT_OFST (11), keep looking
+        qbne READ_SECTOR, GLOBAL.sector_offset, SECT_OFST
+
+        jmp  SEND_ACK
+
 READ_SECTOR:
         //  We might try to read an entire track here.
         jal  STACK.ret_addr, fnWait_For_Hi
@@ -208,14 +235,14 @@ fnWait_For_Lo:
 fnFind_Sync:
         rcp  find_sync.ret_addr, STACK.ret_addr
 
+        // Skip this function if sync_word is 0x00000000
+        rclr find_sync.sync_word
+        qbeq found_sync, find_sync.sync_word, interface.sync_word
+
+        rcp  find_sync.sync_word, interface.sync_word
+
         rclr find_sync.cur_dword
         rclr find_sync.bit_remain
-        ldi  find_sync.sync_word.w0, SYNC_WORD
-        ldi  find_sync.sync_word.w2, SYNC_WORD
-
-        // Lemmings sync word!
-        //ldi  find_sync.sync_word.w0, #0xaaaa
-        //ldi  find_sync.sync_word.w2, #0x912a
 
 time_to_low:
         rclr find_sync.timer
@@ -270,7 +297,7 @@ found_sync:
  *
  * 0x44 0x33 0x22 0x11 0x88 0x77 0x66 0x55
  *
- * We expect the bytes to be flipped back before processing on the ARM CPU
+ * We swap the bytes back on the ARM CPU
  */
 .struct Read_Sector
         .u8   bit_remain
@@ -290,19 +317,26 @@ fnRead_Sector:
         rclr read_sector.dword_count
         rclr read_sector.ram_offset
 
-        // Set the first two dwords to 0xaaaaaaaa 0x44894489
+        // Set the first two dwords to 0xaaaaaaaa 0x44894489,
+        // if we have regular sync
+        // We borrow the timer register, for simplicity
+        ldi  read_sector.timer, SYNC_WORD
+        qbne skip_copy_sync_words, interface.sync_word.w0, read_sector.timer
         ldi  read_sector.cur_dword.w0, 0xaaaa
         ldi  read_sector.cur_dword.w2, 0xaaaa
-        sbbo read_sector.cur_dword, GLOBAL.sharedMem, read_sector.ram_offset, SIZE(read_sector.cur_dword)
-        add  read_sector.ram_offset, read_sector.ram_offset, SIZE(read_sector.cur_dword)
+        sbbo read_sector.cur_dword, GLOBAL.sharedMem, read_sector.ram_offset, \
+                                                SIZE(read_sector.cur_dword)
         inc  read_sector.dword_count
+        inc4 read_sector.ram_offset
 
         ldi  read_sector.cur_dword.w0, SYNC_WORD
         ldi  read_sector.cur_dword.w2, SYNC_WORD
-        sbbo read_sector.cur_dword, GLOBAL.sharedMem, read_sector.ram_offset, SIZE(read_sector.cur_dword)
-        add  read_sector.ram_offset, read_sector.ram_offset, SIZE(read_sector.cur_dword)
+        sbbo read_sector.cur_dword, GLOBAL.sharedMem, read_sector.ram_offset, \
+                                                SIZE(read_sector.cur_dword)
+        inc4 read_sector.ram_offset
         inc  read_sector.dword_count
 
+skip_copy_sync_words:
         rclr read_sector.cur_dword
         rclr read_sector.bit_count
 
@@ -323,7 +357,7 @@ rs_timer:
         qbbs rs_timer, PIN_READ_DATA 
 
         qbgt rs_short, read_sector.timer, #140//#140       // timer < 140
-        qbgt rs_med, read_sector.timer, #198  //#190       // timer < 190
+        qbgt rs_med, read_sector.timer, #198  //#198       // timer < 190
 
 rs_long:
         ldi  read_sector.bit_remain, #3
@@ -351,10 +385,25 @@ rs_short:
         jmp  rs_time_to_lo
 
 got_dword:
-        sbbo read_sector.cur_dword, GLOBAL.sharedMem, read_sector.ram_offset, SIZE(read_sector.cur_dword)
-        add  read_sector.ram_offset, read_sector.ram_offset, SIZE(read_sector.cur_dword)
+        sbbo read_sector.cur_dword, GLOBAL.sharedMem, read_sector.ram_offset, \
+                                                SIZE(read_sector.cur_dword)
         inc  read_sector.dword_count
+        inc4 read_sector.ram_offset
 
+        // Enable writing of more than 0x3000 bytes.
+        // We write 0x1000, and give allert to the ARM side,
+        // we continue to write 0x1000 more, while ARM reads the last 0x1000.
+        // Then jump back to 0x00, for the next 0x1000
+        ldi  read_sector.timer, 0x0fff;
+        and  read_sector.timer, read_sector.timer, read_sector.ram_offset
+        qbne skip_interrupt, read_sector.timer, #0
+        // We have read 0x1000 - Notify ARM
+        ldi  r31.b0, PRU0_ARM_INTERRUPT+16
+        // We limit the ram_offset to 0x1fff here
+        ldi  read_sector.timer, 0x1000;
+        and  read_sector.ram_offset, read_sector.ram_offset, read_sector.timer
+        
+skip_interrupt:
         rclr read_sector.cur_dword
         rclr read_sector.bit_count
 
@@ -363,7 +412,8 @@ got_dword:
         rcp  read_sector.bit_count, read_sector.bit_remain
         or   read_sector.cur_dword, read_sector.cur_dword, #1
 no_bits_remain:
-        qble rs_time_to_lo, read_sector.sector_len, read_sector.dword_count // dword_count <= sector_len
+        // dword_count <= sector_len
+        qble rs_time_to_lo, read_sector.sector_len, read_sector.dword_count
 
         // Mark the sector read done,
         // if we are not trying to read whole track!
@@ -409,7 +459,7 @@ read_sector_done:
 .ends
 .enter get_sector_offset_scope
 .assign MFM_HEADER, r7, r20, mfm_header
-.assign Get_Sector_Offset, r4, r5, get_sector_offset
+.assign Get_Sector_Offset, r5, r6, get_sector_offset
 fnGet_Sector_Offset:
         ldi  get_sector_offset.MASK.w0, 0x5555
         ldi  get_sector_offset.MASK.w2, 0x5555

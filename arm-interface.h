@@ -14,16 +14,18 @@
 #define COMMAND_RESET_DRIVE     (0x07 | 0x80)
 #define COMMAND_ERASE_TRACK     (0x08 | 0x80)
 #define COMMAND_WRITE_TRACK     (0x09 | 0x80)
-#define COMMAND_FIND_SYNC       (0x0a | 0x80)
+#define COMMAND_READ_TRACK      (0x0a | 0x80)
+#define COMMAND_FIND_SYNC       (0x0b | 0x80)
 
 #ifndef __GNUC__
 .struct ARM_IF
         .u8  command
         .u8  unused
         .u16 argument
+        .u32 sync_word
         .u32 read_count
 .ends
-.assign ARM_IF, r28, r29, interface
+.assign ARM_IF, r27, r29, interface
 
 #else
 
@@ -33,6 +35,7 @@ struct ARM_IF {
 	uint8_t  volatile command;
 	uint8_t  volatile unused;
         uint16_t volatile argument;
+        uint32_t volatile sync_word;
         uint32_t volatile read_count;
 }__attribute__((packed));
 

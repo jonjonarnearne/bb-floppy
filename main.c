@@ -9,33 +9,6 @@
 #include "arm-interface.h"
 #include "pru-setup.h"
 
-void hexdump(const void *b, size_t len)
-{
-    int i;
-    const uint8_t *buf = b;
-    char str[17];
-    char *c = str;
-
-    for (i=0; i < len; i++) {
-        if (i && !(i % 16)) {
-            *c = '\0';
-            printf("%s\n", str);
-            c = str;
-        }
-	if (!(i % 16))
-		printf("0x%04X: ", i);
-        *c++ = (*buf < 128 && *buf > 32) ? *buf : '.';
-        printf("%02x ", *buf++);
-    }
-
-    //if (!(i % 16))
-    //    return;
-
-    *c = '\0';
-    printf("%s\n", str);
-}
-
-
 #define min(a,b) ((a < b) ? a : b)
 #define max(a,b) ((a > b) ? a : b)
 
@@ -360,32 +333,73 @@ int init_read(int argc, char ** argv)
 
 int init_read_track(int argc, char ** argv)
 {
+        int rc = -1;
 	enum pru_head_side track_side = PRU_HEAD_UPPER;
 	char *filename = NULL;
-	int opt;
+	int opt, special_sync = 0, sync_set = 0;
+        uint32_t sync_word = 0;
+        
 	FILE *fp;
-	unsigned char *mfm_track = malloc(0x3000);//malloc(RAW_MFM_TRACK_SIZE);
+	unsigned char *mfm_track = malloc(0x3200);//malloc(RAW_MFM_TRACK_SIZE);
 	if (!mfm_track)
-		return -1;
+                return -1;
 
-	while((opt = getopt(argc, argv, "-l")) != -1) {
+	while((opt = getopt(argc, argv, "-lns:")) != -1) {
 		switch(opt) {
 		case 'l':
 			track_side = PRU_HEAD_LOWER;
 			break;
+                case 'n':
+                        // Don't wait for sync, just read a track!
+                        special_sync = 1;
+                        sync_word = 0x00000000;
+                        sync_set++;
+                        break;
+                case 's':
+                        special_sync = 2;
+                        sync_word = strtoul(optarg, NULL, 0);
+                        sync_set++;
+                        break;
 		case 1:
 			printf("Filename detected!\n");
 			filename = optarg;
+                        break;
+                default:
+                        rc = -1;
+                        goto end;
 		}
 	}
 
+        if (sync_set > 1) 
+                fprintf(stderr, "%s: warning: both -s and -n specified!\n",
+                                                                        argv[0]);
+
+
 	pru_start_motor(pru);
+        if (track_side == PRU_HEAD_LOWER)
+                printf("Reading LOWER side\n");
         pru_set_head_side(pru, track_side);
-	pru_read_track(pru, mfm_track);
+        if (!special_sync) {
+	        pru_read_track(pru, mfm_track);
+        } else if (special_sync == 1) {
+                // Read 0x3200 bytes from the disk, don't wait for any sync
+                pru_read_raw_track(pru, mfm_track, 0x3200,
+                                                PRU_SYNC_NONE, sync_word);
+        } else {
+                printf("Trying to sync to: 0x%04x 0x%04x\n",
+                        (sync_word & 0xffff0000) >> 16, sync_word & 0xffff);
+                pru_read_raw_track(pru, mfm_track, 0x3200,
+                                                PRU_SYNC_CUSTOM, sync_word);
+        }
+
+
 	pru_stop_motor(pru);
 
-	decode_track(mfm_track, NULL, NULL);
-	//hexdump(mfm_track, 0x3000);
+        if (!special_sync)
+	        decode_track(mfm_track, NULL, NULL);
+        else
+                hexdump(mfm_track, 0x3200);
+
 
 	if (filename) {
 		fp = fopen(filename, "w");
@@ -393,9 +407,9 @@ int init_read_track(int argc, char ** argv)
 		fclose(fp);
 	}
 
+end:
         free(mfm_track);
-
-	return 0;
+	return rc;
 }
 
 int init_write_track(int argc, char ** argv)
