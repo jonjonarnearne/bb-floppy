@@ -204,6 +204,7 @@ static void decode_track(void * p_ram, uint8_t *mfm_track, uint8_t *data_track)
 	uint8_t *data_sectors = data_track;
 
         ram = p_ram + 8;
+	fprintf(stderr, "Calling deprecated function \"decode_track\"\n");
 
         for (e = 0; e<11; e++) {
                 info = decode_mfm_sector(ram, 1080, data);
@@ -278,7 +279,6 @@ int init_test(int argc, char ** argv)
 /* Read an entire disk into MFM format.
  * The data we write out, will be a big endian clone of the mfm data on the disk
  */
-
 int init_read(int argc, char ** argv)
 {
         FILE *fp;
@@ -331,6 +331,50 @@ int init_read(int argc, char ** argv)
 	return 0;
 }
 
+/* Write a raw mfm track to disk - complimentary of init_read
+ * Write a complete raw mfm_disk image back to a disk
+ * */
+int init_write(int argc, char ** argv)
+{
+	FILE *fp;
+	size_t items, count = 0;
+
+	unsigned int dword;
+	unsigned int *dwords = malloc(RAW_MFM_SECTOR_SIZE);
+	if (!dwords)
+		exit(-1);
+
+	if (argc != 2) {
+		usage();
+		printf("You must give a filename to a mfm file\n");
+		return -1;	
+	}
+
+	dwords[0] = 0xaaaaaaaa;
+	dwords[1] = htobe32(0x44894489);
+
+	count = 2;
+	fp = fopen(argv[1], "r");
+	while(1) {
+		items = fread(&dword, sizeof(dword), 1, fp);
+		if (!items) break;
+		dwords[count] = htobe32(dword);
+		count++;
+		if (count == RAW_MFM_SECTOR_SIZE/4) break;
+	}
+	fclose(fp);
+
+	printf("Done: read: %d\n", count * 4);
+	hexdump(dwords, RAW_MFM_SECTOR_SIZE);
+	free(dwords);
+	return 0;
+}
+
+/* Read the current track.
+ * We can specify if we don't want to wait for any sync markers,
+ * and read the track multiple times.
+ * We can store the read track as raw mfm data.
+ * */
 int init_read_track(int argc, char ** argv)
 {
         int track_len, rc = -1;
@@ -344,24 +388,28 @@ int init_read_track(int argc, char ** argv)
 	while((opt = getopt(argc, argv, "-c:lns:")) != -1) {
 		switch(opt) {
 		case 'c':
-			// loop count
+			// read the track multiple times
 			loops = strtol(optarg, NULL, 0);
 			break;
 		case 'l':
+			// set l for lower side
 			track_side = PRU_HEAD_LOWER;
 			break;
                 case 'n':
-                        // Don't wait for sync, just read a track!
+                        // Don't wait for any sync,
+			// just read from here until we have a complete track.
                         special_sync = 1;
                         sync_word = 0x00000000;
                         sync_set++;
                         break;
                 case 's':
+			// Specify a custom sync word - should be 16-bit
                         special_sync = 2;
                         sync_word = strtoul(optarg, NULL, 0);
                         sync_set++;
                         break;
 		case 1:
+			// If you specify a filename, we will save the data to that file.
 			filename = optarg;
 			printf("Filename detected: %s\n", filename);
                         break;
@@ -428,6 +476,7 @@ end:
 	return rc;
 }
 
+/* Write a raw mfm_track out to disk */
 int init_write_track(int argc, char ** argv)
 {
 	FILE *fp;
@@ -452,6 +501,7 @@ int init_write_track(int argc, char ** argv)
 	return 0;
 }
 
+/* Find the sync (0x4489) and read a single sector */
 int init_read_sector(int argc, char ** argv)
 {
         //int sector_info;
@@ -500,6 +550,7 @@ int init_read_sector(int argc, char ** argv)
         printf("0b%c%c%c%c%c%c%c%c\n", BYTE_TO_BIN((sector[dword] & 0xff000000) >> 24));
 #endif
 
+/* Step the head in or out. i.e. I 4 = step 4 tracks in */
 int init_step_head(int argc, char **  argv)
 {
 	enum pru_head_dir dir;
@@ -538,6 +589,7 @@ int init_step_head(int argc, char **  argv)
 }
 
 
+/* write 0xaa to an entire track */
 int init_erase_track(int argc, char ** argv)
 {
 	pru_erase_track(pru);
@@ -597,6 +649,7 @@ int init_write_track(int argc, char ** argv)
 #endif
 
 
+/* Move to track 40, and read the AMIGA_DOS identification track. */
 int init_identify(int argc, char ** argv)
 {
 	unsigned char *mfm_track = malloc(RAW_MFM_TRACK_SIZE);
@@ -615,6 +668,7 @@ int init_identify(int argc, char ** argv)
 	return 0;
 }
 
+/* Scan the current track, and try to find the sync marker 0x4489 */
 int find_sync(int argc, char ** argv)
 {
 	int opt;
@@ -635,6 +689,7 @@ int find_sync(int argc, char ** argv)
         return 0;
 }
 
+/* Move the head back to track 0 */
 int reset_drive(int argc, char ** argv)
 {
         pru_start_motor(pru);
@@ -643,6 +698,11 @@ int reset_drive(int argc, char ** argv)
         return 0;
 }
 
+/* read for 200000us (one complete track,
+ * and store timing information to file
+ * the timing is an array of unsigned 16-bit integers.
+ * Multiply the numbers with 30, to get nano-seconds.
+ * */
 int read_timing(int argc, char ** argv)
 {
 	FILE *fp;
@@ -676,41 +736,6 @@ int read_timing(int argc, char ** argv)
         return 0;
 }
 
-int write_raw_mfm(int argc, char ** argv)
-{
-	FILE *fp;
-	size_t items, count = 0;
-
-	unsigned int dword;
-	unsigned int *dwords = malloc(RAW_MFM_SECTOR_SIZE);
-	if (!dwords)
-		exit(-1);
-
-	if (argc != 2) {
-		usage();
-		printf("You must give a filename to a mfm file\n");
-		return -1;	
-	}
-
-	dwords[0] = 0xaaaaaaaa;
-	dwords[1] = htobe32(0x44894489);
-
-	count = 2;
-	fp = fopen(argv[1], "r");
-	while(1) {
-		items = fread(&dword, sizeof(dword), 1, fp);
-		if (!items) break;
-		dwords[count] = htobe32(dword);
-		count++;
-		if (count == RAW_MFM_SECTOR_SIZE/4) break;
-	}
-	fclose(fp);
-
-	printf("Done: read: %d\n", count * 4);
-	hexdump(dwords, RAW_MFM_SECTOR_SIZE);
-	free(dwords);
-	return 0;
-}
 
 typedef int (*fn_init_ptr)(int, char **);
 static const struct modes {
@@ -719,7 +744,8 @@ static const struct modes {
 	fn_init_ptr init;
 } modes[] = {
 	{ "identify", "print name of disk, and exit", init_identify },
-	{ "read", "read entire disk to file", init_read },
+	{ "read", "read entire disk to mfm image file", init_read },
+	{ "write", "write an mfm image file to disk", init_write },
 	{ "read_track", "read and dump single track", init_read_track },
 	{ "read_sector", "try to read a single sector", init_read_sector },
 	{ "write_track", "write a single track", init_write_track },
@@ -727,7 +753,6 @@ static const struct modes {
 	{ "test", "test the motor control, one second test", init_test },
 	{ "find_sync", "See if we find any sync marker", find_sync },
 	{ "reset", "Reset head to cylinder 0", reset_drive },
-	{ "write_raw", "Write raw mfm file to drive", write_raw_mfm },
 	{ "step_head", "Move head [n] steps in [dir]", init_step_head },
 	{ "read_timing", "Get a list of bit timings", read_timing },
 	{ NULL, NULL }
