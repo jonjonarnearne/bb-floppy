@@ -213,6 +213,7 @@ void encode_mfm_sector(uint8_t sector_number, uint8_t sector_offset,
 	return;
 }
 
+static void usage(void);
 static struct pru * pru;
 
 /* Call this after pru_read_track, to sync up the data.
@@ -499,7 +500,7 @@ int init_identify(int argc, char ** argv)
 	return 0;
 }
 
-int find_sync(int argc, char ** argv)\
+int find_sync(int argc, char ** argv)
 {
         pru_start_motor(pru);
 	pru_find_sync(pru);
@@ -507,12 +508,49 @@ int find_sync(int argc, char ** argv)\
         return 0;
 }
 
-int reset_drive(int argc, char ** argv)\
+int reset_drive(int argc, char ** argv)
 {
         pru_start_motor(pru);
 	pru_reset_drive(pru);
         pru_stop_motor(pru);
         return 0;
+}
+
+int write_raw_mfm(int argc, char ** argv)
+{
+	FILE *fp;
+	size_t items, count = 0;
+
+	unsigned int dword;
+	unsigned int *dwords = malloc(RAW_MFM_SECTOR_SIZE);
+	if (!dwords)
+		exit(-1);
+
+	printf("argc: %d\n", argc);
+	if (argc != 3) {
+		usage();
+		printf("You must give a filename to a mfm file\n");
+		return -1;	
+	}
+
+	dwords[0] = 0xaaaaaaaa;
+	dwords[1] = htobe32(0x44894489);
+
+	count = 2;
+	fp = fopen(argv[2], "r");
+	while(1) {
+		items = fread(&dword, sizeof(dword), 1, fp);
+		if (!items) break;
+		dwords[count] = htobe32(dword);
+		count++;
+		if (count == RAW_MFM_SECTOR_SIZE/4) break;
+	}
+	fclose(fp);
+
+	printf("Done: read: %d\n", count * 4);
+	hexdump(dwords, RAW_MFM_SECTOR_SIZE);
+	free(dwords);
+	return 0;
 }
 
 typedef int (*fn_init_ptr)(int, char **);
@@ -530,10 +568,11 @@ static const struct modes {
 	{ "test", "test the motor control, one second test", init_test },
 	{ "find_sync", "See if we find any sync marker", find_sync },
 	{ "reset", "Reset head to cylinder 0", reset_drive },
+	{ "write_raw", "Write raw mfm file to drive", write_raw_mfm },
 	{ NULL, NULL }
 };
 
-void usage(void)
+static void usage(void)
 {
 	const struct modes *m = modes;
 	printf(
@@ -658,4 +697,5 @@ int main(int argc, char **argv)
 	return 0;
 }
 #endif
+
 
