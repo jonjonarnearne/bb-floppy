@@ -24,6 +24,7 @@
 #define PIN_UNUSED              r31.t14 // P8.16
 
 #define SYNC_WORD               0x4489
+#define SECT_OFST               #11
 
 .macro  rclr
 .mparam reg
@@ -53,12 +54,13 @@
 .struct GREGS
         .u32  pruMem
         .u32  sharedMem
+        .u8   sector_offset
 .ends
-.assign GREGS, r0, r1, GLOBAL
+.assign GREGS, r0, r2.b0, GLOBAL
 .struct SREGS
         .u32  ret_addr
 .ends
-.assign SREGS, r19, r19, STACK
+.assign SREGS, r3, r3, STACK
 
 START:
         lbco r0, C4, 4, 4    // Copy 4 bytes of memory from C4 + 4 (SYSCFG_REG)
@@ -108,11 +110,11 @@ START_MOTOR:
         // 50 ms seems to work
         // 10ns * 5,000,000 = 50,000,000us = 50ms
         // 5,000,000 = 0x004c 4b40
-        ldi  r20.w0, #0x4b40
-        ldi  r20.w2, #0x004c
+        ldi  r5.w0, #0x4b40
+        ldi  r5.w2, #0x004c
 spin_up_time:
-        dec  r20
-        qbne spin_up_time, r20, #0
+        dec  r5
+        qbne spin_up_time, r5, #0
         jmp  SEND_ACK
 
 STOP_MOTOR:
@@ -138,6 +140,20 @@ RESET_DRIVE:
         jal  STACK.ret_addr, fnStep_Head
         jmp  SEND_ACK
 
+        
+
+READ_SECTOR:
+        ldi  GLOBAL.sector_offset, #0
+        jal  STACK.ret_addr, fnWait_For_Hi
+        jal  STACK.ret_addr, fnWait_For_Lo
+        jal  STACK.ret_addr, fnFind_Sync
+        jal  STACK.ret_addr, fnRead_Sector
+
+        qbeq SEND_ACK, GLOBAL.sector_offset, #0xff
+        qbne READ_SECTOR, GLOBAL.sector_offset, SECT_OFST
+
+        jmp  SEND_ACK
+
 SEND_ACK:
         and  interface.command, interface.command, 0x7f
         sbbo interface.command, GLOBAL.pruMem, \
@@ -147,21 +163,6 @@ SEND_ACK:
         mov  r31.b0, PRU0_ARM_INTERRUPT+16
         jmp  WAIT_FOR_COMMAND
        
-        
-
-READ_SECTOR:
-        jal  STACK.ret_addr, fnWait_For_Hi
-        jal  STACK.ret_addr, fnWait_For_Lo
-        jal  STACK.ret_addr, fnFind_Sync
-        jal  STACK.ret_addr, fnRead_Sector
-
-        and  interface.command, interface.command, 0x7f
-        sbbo interface.command, GLOBAL.pruMem, \
-                                OFFSET(interface.command), \
-                                SIZE(interface.command)
-
-        mov  r31.b0, PRU0_ARM_INTERRUPT+16
-        jmp  WAIT_FOR_COMMAND
         
         
 fnWait_For_Hi:
@@ -253,9 +254,9 @@ fnRead_Sector:
         rclr read_sector.dword_count
         rclr read_sector.cur_dword
         rclr read_sector.ram_offset
-        //ldi  read_sector.sector_len, MFM_TRACK_LEN
-        rcp  read_sector.sector_len, interface.argument
-        lsr  read_sector.sector_len, read_sector.sector_len, #2  // sector_len / 4 == Convert from bytes to DWORDS
+        ldi  read_sector.sector_len, 14 // 14 dwords is the mfm_sector head
+        //rcp  read_sector.sector_len, interface.argument
+        //lsr  read_sector.sector_len, read_sector.sector_len, #2  // sector_len / 4 == Convert from bytes to DWORDS
 
 rs_time_to_lo:
         rclr read_sector.timer
@@ -308,9 +309,99 @@ got_dword:
 no_bits_remain:
         qble rs_time_to_lo, read_sector.sector_len, read_sector.dword_count // dword_count <= sector_len
 
+        qbne read_sector_done, read_sector.sector_len, #14
+
+        // We have only read the head, now check if we should continue reading
+        jal  STACK.ret_addr, fnGet_Sector_Offset
+        // 0xff == chksum error
+        qbeq read_sector_done, GLOBAL.sector_offset, #0xff
+        qbne read_sector_done, GLOBAL.sector_offset, SECT_OFST
+
+        ldi read_sector.sector_len, #(0x3000/4) - 14
+        jmp rs_time_to_lo
+
+read_sector_done:
         rcp  STACK.ret_addr, read_sector.ret_addr
         jmp  STACK.ret_addr
 .leave read_sector_scope
+
+.struct MFM_HEADER
+        .u32  odd_info
+        .u32  even_info
+        .u32  odd_label0
+        .u32  odd_label1
+        .u32  odd_label2
+        .u32  odd_label3
+        .u32  even_label0
+        .u32  even_label1
+        .u32  even_label2
+        .u32  even_label3
+        .u32  odd_head_chksum
+        .u32  even_head_chksum
+.ends
+.struct Get_Sector_Offset
+        .u32  MASK
+        .u32  chksum
+.ends
+.enter get_sector_offset_scope
+.assign MFM_HEADER, r9, r20, mfm_header
+.assign Get_Sector_Offset, r7, r8, get_sector_offset
+fnGet_Sector_Offset:
+        ldi  get_sector_offset.MASK.w0, 0x5555
+        ldi  get_sector_offset.MASK.w2, 0x5555
+        lbbo mfm_header, GLOBAL.sharedMem, 0, SIZE(MFM_HEADER)
+
+        rclr get_sector_offset.chksum
+        xor  get_sector_offset.chksum, get_sector_offset.chksum, \
+                                                        mfm_header.odd_info
+        xor  get_sector_offset.chksum, get_sector_offset.chksum, \
+                                                        mfm_header.even_info
+        and  get_sector_offset.chksum, get_sector_offset.chksum, \
+                                                        get_sector_offset.MASK
+        xor  get_sector_offset.chksum, get_sector_offset.chksum, \
+                                                        mfm_header.odd_label0
+        xor  get_sector_offset.chksum, get_sector_offset.chksum, \
+                                                        mfm_header.even_label0
+        xor  get_sector_offset.chksum, get_sector_offset.chksum, \
+                                                        mfm_header.odd_label1
+        xor  get_sector_offset.chksum, get_sector_offset.chksum, \
+                                                        mfm_header.even_label1
+        xor  get_sector_offset.chksum, get_sector_offset.chksum, \
+                                                        mfm_header.odd_label2
+        xor  get_sector_offset.chksum, get_sector_offset.chksum, \
+                                                        mfm_header.even_label2
+        xor  get_sector_offset.chksum, get_sector_offset.chksum, \
+                                                        mfm_header.odd_label3
+        xor  get_sector_offset.chksum, get_sector_offset.chksum, \
+                                                        mfm_header.even_label3
+        and  get_sector_offset.chksum, get_sector_offset.chksum, \
+                                                        get_sector_offset.MASK
+
+        and  mfm_header.odd_info, mfm_header.odd_info, get_sector_offset.MASK
+        lsl  mfm_header.odd_info, mfm_header.odd_info, #1
+        and  mfm_header.even_info, mfm_header.even_info, get_sector_offset.MASK
+        or   mfm_header.odd_info, mfm_header.odd_info, mfm_header.even_info
+
+        and  mfm_header.odd_head_chksum, mfm_header.odd_head_chksum, \
+                                                        get_sector_offset.MASK
+        lsl  mfm_header.odd_head_chksum, mfm_header.odd_head_chksum, #1
+        and  mfm_header.even_head_chksum, mfm_header.even_head_chksum, \
+                                                        get_sector_offset.MASK
+        or   mfm_header.odd_head_chksum, mfm_header.odd_head_chksum, \
+                                                        mfm_header.even_head_chksum
+        
+        rclr GLOBAL.sector_offset
+
+        qbeq chksum_match, mfm_header.odd_head_chksum, get_sector_offset.chksum
+        // This header is unreadable
+        ldi  GLOBAL.sector_offset, #0xff
+        jmp  STACK.ret_addr
+
+chksum_match:
+        and  GLOBAL.sector_offset, mfm_header.odd_info, #0xff
+        
+        jmp  STACK.ret_addr
+.leave get_sector_offset_scope
 
 .struct Step_Head
         .u16  step_count

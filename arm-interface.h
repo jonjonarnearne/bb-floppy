@@ -17,10 +17,9 @@
         .u8  command
         .u8  unused
         .u16 argument
-        .u32 tmp
+        .u32 read_count
 .ends
-// can use r10 - r18
-.assign ARM_IF, r10, r11, interface
+.assign ARM_IF, r28, r29, interface
 
 #else
 
@@ -30,7 +29,7 @@ struct ARM_IF {
 	uint8_t  volatile command;
 	uint8_t  volatile unused;
         uint16_t volatile argument;
-        uint32_t volatile tmp;
+        uint32_t volatile read_count;
 }__attribute__((packed));
 
 #endif

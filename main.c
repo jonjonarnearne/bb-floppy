@@ -87,7 +87,7 @@ struct mfm_sector {
 } __attribute__((packed));
 
 #define print_sector_info(info) do { \
-	printf("0x%08x: Format magic: 0x%02x, Cylinder Number: %u, Head: %s, sector_number: %2u - until end 0x%u\n", \
+	printf("0x%08x: Format magic: 0x%02x, Cylinder Number: %u, Head: %s, sector_number: %2u - until end 0x%2d\n", \
                         info, \
                         (info & 0xff000000) >> 24, \
                         ((info & 0x00ff0000) >> 16) >> 1, \
@@ -256,17 +256,168 @@ int init_read(int argc, char ** argv)
 
 int init_read_sector(int argc, char ** argv)
 {
-	unsigned int info;
+        FILE *fp;
+	unsigned int info, i, shifts, dwords_len;
+        uint8_t * volatile ram;
+        uint32_t * volatile dwords;
+        uint32_t mask = 0;
 	uint8_t data[512];
+        uint8_t *sectors = malloc(1080 * 11);
+        if (!sectors) return -1;
 
 	pru_start_motor(pru);
 	pru_read_sector(pru);
 	info = decode_mfm_sector(pru->shared_ram, MFM_TRACK_LEN, data);
 	print_sector_info(info);
-	//hexdump(pru->shared_ram + 1084, 12);
-
+	//hexdump(data, 512);
 	pru_stop_motor(pru);
 
+        ram = pru->shared_ram;
+
+        memcpy(sectors, ram, 1080);
+        ram += 1080;
+        dwords = (uint32_t * volatile)ram;
+
+        printf("%08x\n", dwords[2]);
+        for(i=0; i<8; i++) {
+                if (dwords[0] == 0xaaaaaaaa && dwords[1] == 0x44894489)
+                                break;
+
+                mask <<= 0x01;
+                mask |= 0x01;
+
+                dwords[0] <<= 1;
+                dwords[0] |= (dwords[1] & 0x80000000) >> 31;
+
+                dwords[1] <<= 1;
+                dwords[1] |= (dwords[2] & 0x80000000) >> 31;
+
+                dwords[2] <<= 1;
+        }
+        printf("%08x %08x\n", dwords[0], dwords[1]);
+        shifts = i;
+        printf("Shifted %d times!\n", shifts);
+        printf("%02x - MASK\n", mask);
+        printf("%08x\n", dwords[2]);
+        mask <<= (32-i);
+        printf("%02x - MASK\n", mask);
+        dwords[2] |= (dwords[3] & mask) >> (32 - i);
+        printf("%08x\n", dwords[2]);
+
+        dwords += 3;
+        dwords_len = (0x3000 - (1080 + 12)) / 4;
+        
+        for(i=0; i<dwords_len; i++) {
+                dwords[i] <<= shifts;
+                if (i < (dwords_len-1))
+                        dwords[i] |= (dwords[i+1] & mask) >> (32-shifts);
+        }
+
+        dwords -= 1;
+        ram += 8;
+	info = decode_mfm_sector(ram, MFM_TRACK_LEN, data);
+	print_sector_info(info);
+        //hexdump(data, 512);
+        
+        // ----- AGAIN 1 ------
+
+        ram += 1080;
+        mask = 0;
+        dwords = (uint32_t * volatile)ram;
+
+        printf("%08x\n", dwords[2]);
+        for(i=0; i<8; i++) {
+                if (dwords[0] == 0xaaaaaaaa && dwords[1] == 0x44894489)
+                                break;
+
+                mask <<= 0x01;
+                mask |= 0x01;
+
+                dwords[0] <<= 1;
+                dwords[0] |= (dwords[1] & 0x80000000) >> 31;
+
+                dwords[1] <<= 1;
+                dwords[1] |= (dwords[2] & 0x80000000) >> 31;
+
+                dwords[2] <<= 1;
+        }
+        
+        if (mask) {
+                printf("%08x %08x\n", dwords[0], dwords[1]);
+                shifts = i;
+                printf("Shifted %d times!\n", shifts);
+                printf("%02x - MASK\n", mask);
+                printf("%08x\n", dwords[2]);
+                mask <<= (32-i);
+                printf("%02x - MASK\n", mask);
+                dwords[2] |= (dwords[3] & mask) >> (32 - i);
+                printf("%08x\n", dwords[2]);
+
+                dwords += 3;
+                dwords_len = (0x3000 - (1080 + 12)) / 4;
+
+                for(i=0; i<dwords_len; i++) {
+                        dwords[i] <<= shifts;
+                        if (i < (dwords_len-1))
+                                dwords[i] |= (dwords[i+1] &= mask) >> (32-shifts);
+                }
+
+                dwords -= 1;
+        }
+
+        ram += 8;
+	info = decode_mfm_sector(ram, MFM_TRACK_LEN, data);
+	print_sector_info(info);
+
+        // ----- AGAIN 2 ------
+
+        ram += 1080;
+        mask = 0;
+        dwords = (uint32_t * volatile)ram;
+
+        printf("%08x\n", dwords[2]);
+        for(i=0; i<8; i++) {
+                if (dwords[0] == 0xaaaaaaaa && dwords[1] == 0x44894489)
+                                break;
+
+                mask <<= 0x01;
+                mask |= 0x01;
+
+                dwords[0] <<= 1;
+                dwords[0] |= (dwords[1] & 0x80000000) >> 31;
+
+                dwords[1] <<= 1;
+                dwords[1] |= (dwords[2] & 0x80000000) >> 31;
+
+                dwords[2] <<= 1;
+        }
+        
+        if (mask) {
+                printf("%08x %08x\n", dwords[0], dwords[1]);
+                shifts = i;
+                printf("Shifted %d times!\n", shifts);
+                printf("%02x - MASK\n", mask);
+                printf("%08x\n", dwords[2]);
+                mask <<= (32-i);
+                printf("%02x - MASK\n", mask);
+                dwords[2] |= (dwords[3] & mask) >> (32 - i);
+                printf("%08x\n", dwords[2]);
+
+                dwords += 3;
+                dwords_len = (0x3000 - (1080 + 12)) / 4;
+
+                for(i=0; i<dwords_len; i++) {
+                        dwords[i] <<= shifts;
+                        if (i < (dwords_len-1))
+                                dwords[i] |= (dwords[i+1] &= mask) >> (32-shifts);
+                }
+
+                dwords -= 1;
+        }
+
+        ram += 8;
+	info = decode_mfm_sector(ram, MFM_TRACK_LEN, data);
+	print_sector_info(info);
 
 	return 0;
 }
