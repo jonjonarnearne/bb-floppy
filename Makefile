@@ -8,6 +8,7 @@ BIN=bb-floppy
 BUILD_DIR=./build
 SRCS=main.c pru-setup.c
 
+FIRMWARE=$(BUILD_DIR)/firmware.bin
 OBJ=$(BUILD_DIR)/firmware.o
 OBJ+=$(SRCS:%.c=$(BUILD_DIR)/%.o)
 
@@ -34,7 +35,7 @@ $(BUILD_DIR)/%.o : %.c
 	$(CC) $(CFLAGS) -MMD -c $< -o $@ 
 	
 $(BUILD_DIR)/%.bin: %.p
-	$(PASM) -V3 -b $<
+	$(PASM) -V3 -b $< $(patsubst %.bin,%,$@)
 
 $(BUILD_DIR)/.dtbo: %.dts
 	dtc -@ -O dtb -o $@ $<
@@ -42,12 +43,13 @@ $(BUILD_DIR)/.dtbo: %.dts
 .PHONY: clean all
 
 clean:
-	-rm $(BUILD_DIR)/$(BIN) $(OBJ) $(DEP)
+	-rm $(BUILD_DIR)/$(BIN) $(OBJ) $(DEP) $(FIRMWARE)
 
-$(BUILD_DIR)/firmware.o: tests/test-motor.bin
+$(BUILD_DIR)/firmware.o: $(FIRMWARE)
 	touch $(patsubst %.o,%.d,$@)			# Just to make clean stop complaining
 	objcopy -B arm -I binary -O elf32-littlearm \
-		--redefine-sym _binary_tests_test_motor_bin_start=_binary_firmware_bin_start \
-		--redefine-sym _binary_tests_test_motor_bin_end=_binary_firmware_bin_end \
-		--redefine-sym _binary_tests_test_motor_bin_size=_binary_firmware_bin_size $< $@
+		--redefine-sym _binary_build_firmware_bin_start=_binary_firmware_bin_start \
+		--redefine-sym _binary_build_firmware_bin_end=_binary_firmware_bin_end \
+		--redefine-sym _binary_build_firmware_bin_size=_binary_firmware_bin_size $< $@
+
 
