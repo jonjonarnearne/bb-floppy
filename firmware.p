@@ -805,9 +805,13 @@ fnGet_Bit_Timing:
         ldi  get_bit_timing.sample_count.w0, #0x86a0
         ldi  get_bit_timing.sample_count.w2, #0x0001
 
-get_bit_timing_wait_index:
+get_bit_timing_wait_index_high:
         M_CHECK_ABORT
-        qbbs get_bit_timing_wait_index, PIN_INDEX
+        qbbc get_bit_timing_wait_index_high, PIN_INDEX
+
+get_bit_timing_wait_index_falling:
+        M_CHECK_ABORT
+        qbbs get_bit_timing_wait_index_falling, PIN_INDEX
 
 get_bit_timing_get_next_bit:
         jal  STACK.ret_addr, fnWait_For_Hi
@@ -845,7 +849,10 @@ get_bit_timing_store:
         and  get_bit_timing.ram_offset, get_bit_timing.ram_offset, get_bit_timing.timer
 
 get_bit_timing_skip_interrupt:
+        // Break if we have exhausted our memory
         qbeq get_bit_timing_done, get_bit_timing.sample_count, #0
+
+        // Get next bit-time, while total_time < target_time
         qblt get_bit_timing_get_next_bit, get_bit_timing.target_time, \
                                           get_bit_timing.total_time
         

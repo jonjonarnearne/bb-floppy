@@ -348,9 +348,9 @@ int pru_get_bit_timing(struct pru * pru, uint16_t ** data)
         if (sample_count > 0) 
                 memcpy(dest, source, 0x1000);
 
-        printf("Sampled %d\n", intf->read_count);
-        printf("Sampled %d ns\n", intf->read_count * 30);
-        printf("Sampled %d us\n", intf->read_count * 30 / 1000);
+        //printf("Sampled %d\n", intf->read_count);
+        //printf("Sampled %d ns\n", intf->read_count * 30);
+        //printf("Sampled %d us\n", intf->read_count * 30 / 1000);
 
 	return (init_samp_count - intf->sync_word);
 }

@@ -770,41 +770,70 @@ int read_timing(int argc, char ** argv)
         return 0;
 }
 
-/* Scan backwards trough bit timing,
- * and return the start of the first sector gap in the timing array */
-static int find_gap_start(const uint16_t * timing, const int sample_count,
-								int *len) {
-	int i, rc = 0, c = 0, max = 0;
-
-	for(i=sample_count; i >= 0; i--) { 
-		if (timing[i] < 140) {
-			c++;
-			continue;
-		} 
-		if ( c > 100) {
-			printf("Potential gap @ %d: %d samples long\n", i, c);
-		}
-		if ( c >= max ) {
-			max = c;
-			rc = i;
-		}
-		c = 0;
+static void shift(uint8_t *data, int len, uint8_t bit)
+{
+	int i;
+	for(i = 0; i < len-1; i++) {
+		data[i] <<= 1;
+		data[i] |= (data[i+1] & 0x80) >> 7;
 	}
+	data[len - 1] <<= 1;
+	if (bit) data[len - 1] |= 1;
+}
 
-	/* return the len of the consequtive samples here! */
-	if (len)
-		*len = max;
+static int check_sync(uint8_t *data, int len)
+{
+	uint8_t fmt,tt,ss,sg;
+	if (data[len - 12] == 0x44 && data[len - 11] == 0x89
+		&& data[len - 10] == 0x44 && data[len - 9] == 0x89) {
+		fmt = ((data[len - 8] & 0x55) << 1) | (data[len - 4] & 0x55);
+		tt = ((data[len - 7] & 0x55) << 1) | (data[len - 3] & 0x55);
+		ss = ((data[len - 6] & 0x55) << 1) | (data[len - 2] & 0x55);
+		sg = ((data[len - 5] & 0x55) << 1) | (data[len - 1] & 0x55);
+		printf(
+		"fmt: 0x%x, cylinder: %d, head: %d, sector: %d, gap_dist: %d\n",
+						fmt, tt >> 1, tt & 0x01, ss, sg);
+		return 1;
+	}
+	return 0;
+}
 
-	return rc;
+static int find_std_sectors(const uint16_t *timing, int sample_count)
+{
+	uint8_t *data;
+	int i, count = 0;
+
+	data = malloc(1088);
+	if (!data) {
+		fprintf(stderr, "Couldn't allocate memory for buffer!\n");
+		return 0;
+	}
+	memset(data, 0x00, 1088);
+
+	for(i=0; i < sample_count; i++) {
+		if (timing[i] > 230) {
+			shift(data, 1088, 0);
+			if (check_sync(data, 1088)) count++;
+		}
+		if (timing[i] > 160) {
+			shift(data, 1088, 0);
+			if (check_sync(data, 1088)) count++;
+		}
+		shift(data, 1088, 0);
+		if (check_sync(data, 1088)) count++;
+
+		shift(data, 1088, 1);
+		if (check_sync(data, 1088)) count++;
+	}
+	return count;
 }
 
 int read_track_timing(int argc, char ** argv)
 {
-	int opt, sample_count, i, c, gap_start, gap_end, gap_len;
+	int rc, opt, sample_count;
 	char *filename = NULL;
 	FILE *fp;
         uint16_t *timing = NULL;
-	uint32_t info, data[3] = {0,0,0};
 	enum pru_head_side track_side = PRU_HEAD_UPPER;
 
 	while((opt = getopt(argc, argv, "-l")) != -1) {
@@ -825,94 +854,15 @@ int read_track_timing(int argc, char ** argv)
         pru_stop_motor(pru);
 
 	printf("\tGot %d samples\n", sample_count);
-	gap_start = find_gap_start(timing, sample_count, &gap_len);
-	gap_end = gap_start + gap_len;
-	
-	for (i=0; i < sample_count; i++) {
-		//if (timing[i] > 0xff)
-		//printf("\t[%d] - Found > 0xff: %d\n", i, timing[i]);
 
-		if (timing[i] > 230 ) {
-			data[2] <<= 1;
-			data[2] |= (data[1] & 0x80000000) >> 31;
-			data[1] <<= 1;
-			data[1] |= (data[0] & 0x80000000) >> 31;
-			data[0] <<= 1;
-			if (data[2] == 0x44894489) {
-				printf("FOUND SYNC 0 @ %d\n", i);
-				info = (data[1] & 0x55555555);
-				info <<= 1;
-				info |= (data[0] & 0x55555555);
-				print_sector_info(htobe32(info));
-			}
-		}
-
-		if (timing[i] > 160) {
-			data[2] <<= 1;
-			data[2] |= (data[1] & 0x80000000) >> 31;
-			data[1] <<= 1;
-			data[1] |= (data[0] & 0x80000000) >> 31;
-			data[0] <<= 1;
-			if (data[2] == 0x44894489) {
-				printf("FOUND SYNC 1 @ %d\n", i);
-				info = (data[1] & 0x55555555);
-				info <<= 1;
-				info |= (data[0] & 0x55555555);
-				print_sector_info(htobe32(info));
-			}
-		}
-		
-		data[2] <<= 1;
-		data[2] |= (data[1] & 0x80000000) >> 31;
-		data[1] <<= 1;
-		data[1] |= (data[0] & 0x80000000) >> 31;
-		data[0] <<= 1;
-		if (data[2] == 0x44894489) {
-			printf("FOUND SYNC 2 @ %d\n", i);
-			info = (data[1] & 0x55555555);
-			info <<= 1;
-			info |= (data[0] & 0x55555555);
-			print_sector_info(htobe32(info));
-		}
-
-		data[2] <<= 1;
-		data[2] |= (data[1] & 0x80000000) >> 31;
-		data[1] <<= 1;
-		data[1] |= (data[0] & 0x80000000) >> 31;
-		data[0] <<= 1;
-		data[0] |= 1;
-		if (data[2] == 0x44894489) {
-			printf("FOUND SYNC 3 @ %d\n", i);
-			info = (data[1] & 0x55555555);
-			info <<= 1;
-			info |= (data[0] & 0x55555555);
-			print_sector_info(htobe32(info));
-		}
+	rc = find_std_sectors(timing, sample_count);
+	if (!rc) {
+		fprintf(stderr,
+			"Couldn't find any standard sectors in data stream!\n"
+			);
+	} else {
+		printf("Found %d sectors!\n", rc);
 	}
-	printf("Found gap_len: %d ending @ %d\n", gap_len, gap_end);
-	c = 0;
-	for (i = gap_end; i<sample_count; i++) {
-		c += 675; 
-		c += timing[i] * 30;
-		if (c >= 200000000 )
-			break;
-	}
-	c = i;
-
-	if (i != sample_count - 1)  {
-		printf("From gap + 2000000us = %d\n", i);
-
-		/* This is not working!
-		 * Consider writing a routine to convert a string of
-		 * samples to something we can compare. */
-		for(; i < sample_count - 0x1; i++) {
-			if (!memcmp(&timing[i], &timing[gap_end], 0x9)) {
-				printf("Found match @ %d\n", i);
-				break;
-			}
-		}
-	}
-
 
 	if (filename) {
 		fp = fopen(filename, "w");
