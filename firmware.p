@@ -46,7 +46,7 @@
         sub reg, reg, #1
 .endm
 
-// This macro takse 15 + 5 = 20ns
+// This macro takes 15 + 5 = 20ns
 .macro  M_CHECK_ABORT
         lbbo interface.command, GLOBAL.pruMem, OFFSET(interface.command), \
                                                SIZE(interface.command)
@@ -595,7 +595,8 @@ fnWrite_Track:
         //                 =                Total  = 1096 bytes * 11 sectors
         //                 =            Sum Total  = 12056 bytes = 0x2f18
         rclr write_track.dword_index
-        ldi  write_track.dword_count, #0x0bc6 // 0x2f18/4 = 3014 dwords
+        //ldi  write_track.dword_count, #0x0bc6 // 0x2f18/4 = 3014 dwords
+        ldi  write_track.dword_count, #2 // 0x2f18/4 = 3014 dwords
 
         //   50 msec spin up time?
         //   Could be tweaked!
@@ -607,23 +608,24 @@ write_track_spin_up:
 
 write_track_get_byte:
         //lbbo write_track.dword, GLOBAL.sharedMem, write_track.dword_index, 4
-        ldi  write_track.dword.w0, 0x8944 //SYNC_WORD
-        ldi  write_track.dword.w2, 0x8944 //SYNC_WORD
-        //ldi  write_track.dword.w0, SYNC_WORD
-        //ldi  write_track.dword.w2, SYNC_WORD
-
-        //lsl  write_track.dword, write_track.dword, #1
-        //dec  write_track.bit_count
+        ldi  write_track.dword.w0, #0xaaaa
+        ldi  write_track.dword.w2, #0xaaaa
+        ldi  write_track.bit_count, #32
 
 write_track_write:
         // MFM data is 01|001|0001
         // 0xaaaa = 0b1010 1010 1010 1010
         // MFM SYNC = 0b0100 0100 1000 1001
         // if this bit is zero, something is wrong
-        //qbbc write_track_epilogue, write_track.dword, #31
-        qbbc write_track_epilogue, write_track.dword, #0
+        qbbc write_track_bit_0, write_track.dword, #31
+write_track_bit_1:
         clr  PIN_WRITE_DATA
+        jmp  write_track_write_bit
+write_track_bit_0:
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
 
+write_track_write_bit:
         // delay 500ns
         rclr write_track.delay_timer
         ldi  write_track.delay_timer.w0, #15
@@ -635,56 +637,31 @@ write_track_pulse_delay:
 
         set  PIN_WRITE_DATA
 
-        //lsl  write_track.dword, write_track.dword, #1
-        lsr  write_track.dword, write_track.dword, #1
-        dec  write_track.bit_count
-        qbeq write_track_epilogue, write_track.bit_count, #0
-        // This bit must be 0
-        //qbbs write_track_epilogue, write_track.dword, #31
-        qbbs write_track_epilogue, write_track.dword, #0
-
-        // Now delay 3500ns for a total of 4000ns | 4us
+        // Now delay 1500ns (-40ns) for a total of 2000ns | 2us
         rclr write_track.delay_timer
-        ldi  write_track.delay_timer.w0, #117
+        ldi  write_track.delay_timer.w0, #49
 write_track_0_delay:
-        M_CHECK_ABORT
-        dec  write_track.delay_timer
-        qbne write_track_0_delay, write_track.delay_timer, #0
+        M_CHECK_ABORT                                           // 20ns
+        dec  write_track.delay_timer                            //  5ns
+        qbne write_track_0_delay, write_track.delay_timer, #0   //  5ns
 
-        //lsl  write_track.dword, write_track.dword, #1
-        lsr  write_track.dword, write_track.dword, #1
+        // The next 8 instructions = 40ns
+        lsl  write_track.dword, write_track.dword, #1
         dec  write_track.bit_count
-        qbeq write_track_epilogue, write_track.bit_count, #0
-        //qbbs write_track_write, write_track.dword, #31
-        qbbs write_track_write, write_track.dword, #0
+        qbeq write_track_get_next_byte, write_track.bit_count, #0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        jmp  write_track_write
 
-        // Now delay 2000ns for a total of 6000ns | 6us
-        rclr write_track.delay_timer
-        ldi  write_track.delay_timer.w0, #66
-write_track_00_delay:
-        M_CHECK_ABORT
-        dec  write_track.delay_timer
-        qbne write_track_00_delay, write_track.delay_timer, #0
-
-        //lsl  write_track.dword, write_track.dword, #1
-        lsr  write_track.dword, write_track.dword, #1
-        dec  write_track.bit_count
-        qbeq write_track_epilogue, write_track.bit_count, #0
-        //qbbs write_track_write, write_track.dword, #31
-        qbbs write_track_write, write_track.dword, #0
-
-        // Now delay 2000ns for a total of 8000ns | 8us
-        rclr write_track.delay_timer
-        ldi  write_track.delay_timer.w0, #66
-write_track_000_delay:
-        M_CHECK_ABORT
-        dec  write_track.delay_timer
-        qbne write_track_000_delay, write_track.delay_timer, #0
-
-        //lsl  write_track.dword, write_track.dword, #1
-        lsr  write_track.dword, write_track.dword, #1
-        dec  write_track.bit_count
-        qbeq write_track_epilogue, write_track.bit_count, #0
+write_track_get_next_byte:
+        dec  write_track.dword_count
+        qbeq write_track_epilogue, write_track.dword_count, #0
+        ldi  write_track.dword.w0, SYNC_WORD
+        ldi  write_track.dword.w2, SYNC_WORD
+        ldi  write_track.bit_count, #32
         jmp  write_track_write
 
 write_track_epilogue:
