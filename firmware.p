@@ -332,18 +332,10 @@ fnStep_Head:
         qblt end_step_head, step_head.step_count, #80 //Programming error
 do:
 
-        // 50us Delay between pin toggle
-        // 10ns * 5,000 = 500,000us = 0.05ms
-        // 5,000 = #5000 - 0.05ms = 50us
-        ldi  step_head.timer.w0, #5000
-        ldi  step_head.timer.w2, #0x0000
-delay_hi:
-        dec  step_head.timer
-        qbne delay_hi, step_head.timer, #0
-
         clr  PIN_HEAD_STEP
 
-        ldi  step_head.timer.w0, #5000
+        // 10ns * 80 = 800ns = 0.8us
+        ldi  step_head.timer.w0, #80
         ldi  step_head.timer.w2, #0x0000
 delay_lo:
         dec  step_head.timer
@@ -355,9 +347,9 @@ delay_lo:
         qbeq done, step_head.step_count, #0
 
         // DELAY PER CYLINDER - Increment
-        // Min 8ms = 8 000 000ns = 800 000 = 0x 00 0c 35 00
-        ldi  step_head.timer.w0, #0x3500
-        ldi  step_head.timer.w2, #0x000c
+        // 4ms = 4 000 000ns = 400 000 = 0x 00 06 1a 80
+        ldi  step_head.timer.w0, #0x1a80
+        ldi  step_head.timer.w2, #0x0006
 cylinder_delay:
         dec  step_head.timer
         qbne cylinder_delay, step_head.timer, #0
@@ -365,12 +357,9 @@ cylinder_delay:
 
 done:
         // Wait for head to settle
-        // 10ns * 3,000,000 = 30,000,000us = 30ms
-        // 3,000,000 = 0x002d c6c0
-        // 10ns * 5,000,000 = 50,000,000us = 50ms
-        // 5,000,000 = 0x004c 4b40
-        ldi  step_head.timer.w0, #0x4b40
-        ldi  step_head.timer.w2, #0x004c
+        // 30ms = 30 000 000ns = 3 000 000 * 10ns = 0x 00 2d c6 c0
+        ldi  step_head.timer.w0, #0xc6c0
+        ldi  step_head.timer.w2, #0x002d
 delay_head_settle:
         dec  step_head.timer
         qbne delay_head_settle, step_head.timer, #0
