@@ -177,9 +177,55 @@ static void leave(int sig)
         printf("\n");
 }
 
+enum bb_floppy_mode {
+	MODE_TERM = 0,
+	MODE_IDENTIFY,
+	MODE_READ
+};
+static const struct md {
+	enum bb_floppy_mode mode;
+	char name[30];
+	char short_help[128];
+} modes[] = {
+{ MODE_IDENTIFY, "identify", "print name of disk, and exit" },
+{ MODE_READ, "read", "read entire disk to file" },
+{ 0, 0, 0}
+};
+
+void usage(void)
+{
+	const struct md *m = modes;
+	printf(
+		"usage: bb-floppy <command> [<args>]\n"
+		"\n"
+		"command must be one of:\n"
+	);
+	while(m->mode != MODE_TERM) {
+		printf("    %s\t%s\n", m->name, m->short_help);
+		m++;
+	}
+
+}
+
 int main(int argc, char **argv)
 {
 	int rc;
+	const struct md *m = modes;
+	enum bb_floppy_mode cur_mode = MODE_TERM;
+
+	if (argc == 1) {
+		usage();
+		exit(1);
+	}
+
+	while(m->mode != MODE_TERM) {
+		if (!strncmp(m->name, argv[1], strlen(m->name))) {
+			cur_mode = m->mode;
+			break;
+		}
+		m++;
+	}
+	exit(0);
 
         //FILE *fp;
 	int mfm_sector_len = 0x1900;

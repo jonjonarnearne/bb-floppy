@@ -94,8 +94,8 @@ START:
         //qbbc END, PIN_READY
 
         CLR PIN_DRIVE_ENABLE_MOTOR
-///*
-        CLR PIN_HEAD_DIR
+/*
+        SET PIN_HEAD_DIR
 
         ldi RxStatus.timer, #500
 del5000ns:
@@ -116,7 +116,7 @@ del5000ns1:
         // 1 000 000 = 100 000
         //ldi r20.w0, #0x86a0
         //ldi r20.w2, #0x0001
-//*/
+*/
 
         //QBBC END, PIN_TRACK_ZERO
 
