@@ -9,4 +9,6 @@ struct pru * pru_setup(void);
 void pru_exit(struct pru * pru);
 void pru_wait_event(struct pru * pru);
 void pru_clear_event(struct pru * pru);
+void pru_send_quit(struct pru * pru);
+int pru_is_done(struct pru * pru);
 #endif

@@ -6,6 +6,7 @@
 #include <prussdrv.h>
 #include <pruss_intc_mapping.h>
 
+#include "arm-interface.h"
 #include "pru-setup.h"
 
 #define PRU_NUM0	0
@@ -88,4 +89,15 @@ void pru_clear_event(struct pru * pru)
 	prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
 }
 
+void pru_send_quit(struct pru * pru)
+{
+	volatile struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
+	intf->command = COMMAND_QUIT;
+}
+
+int pru_is_done(struct pru * pru)
+{
+	volatile struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
+	return (intf->command == COMMAND_QUIT_ACK);
+}
 

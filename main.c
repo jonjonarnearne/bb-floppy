@@ -167,11 +167,6 @@ void decode_track(unsigned char *buf, int mfm_sector_len, int mfm_sector_count)
         }
 }
 
-static void leave(int sig)
-{
-        //ram[0] = 0xff;
-        printf("\n");
-}
 
 int init_test(int argc, char ** argv)
 {
@@ -197,7 +192,7 @@ static const struct modes {
 } modes[] = {
 	{ "identify", "print name of disk, and exit", init_identify },
 	{ "read", "read entire disk to file", init_read },
-	{ "test", "run a short test", init_test },
+	{ "test", "test the motor control, one second test", init_test },
 	{ NULL, NULL }
 };
 
@@ -216,11 +211,17 @@ void usage(void)
 
 }
 
+static struct pru * pru;
+static void int_handler(int sig)
+{
+	pru_send_quit(pru);
+        printf("\n");
+}
+
 int main(int argc, char **argv)
 {
 	int rc;
 	const struct modes *m = modes;
-	struct pru * pru;
 
 	if (argc == 1) {
 		usage();
@@ -239,13 +240,25 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 
+
 	m->init(argc - 1, argv + 1);
 	pru = pru_setup();
 	if (!pru)
 		exit(1);
 
+        signal(SIGINT, int_handler);
+
+	// Wait for firmware init
 	pru_wait_event(pru);
 	pru_clear_event(pru);
+
+	for(;;) {
+		pru_wait_event(pru);
+		pru_clear_event(pru);
+		if (pru_is_done(pru))
+			break;
+	}
+
 	pru_exit(pru);
 
 	exit(0);

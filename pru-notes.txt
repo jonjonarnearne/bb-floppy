@@ -1,0 +1,14 @@
+
+-- Delay function!
+        // Delay 1ms -    r20 =     100 000
+        // Delay 10ms -   r20 =   1 000 000 - 0x 00 0F 42 40
+        // Delay 100ms -  r20 =  10 000 000 - 0x 00 98 96 80
+        // Delay 1000ms - r20 = 100 000 000 - 0x 05 F5 E1 00
+
+        // Delay 1 Sec
+        ldi r20.w0, #0xE100
+        ldi r20.w2, #0x05F5
+del5000ns1:
+        sub     r20, r20, #1
+        qbne    del5000ns1, r20, #0
+
