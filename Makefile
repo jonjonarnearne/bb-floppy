@@ -4,30 +4,50 @@ CFLAGS+= -Wall -O2 -mtune=cortex-a8 -march=armv7-a
 LIBS+= -lprussdrv
 PASM=/usr/bin/pasm
 
-OBJECTS=bb-floppy.o pru-setup.o bb-floppy.bo
-INCLUDES=pru-setup.h
+BIN=bb-floppy
+BUILD_DIR=./build
+SRCS=main.c pru-setup.c
 
-all: bb-floppy.bin bb-floppy
+OBJ=$(BUILD_DIR)/firmware.o
+OBJ+=$(SRCS:%.c=$(BUILD_DIR)/%.o)
+
+$(info $$OBJ id [${OBJ}])
+
+DEP=$(OBJ:%.o=%.d)
+
+all: $(BIN)
 cape: cape-bb-floppy-00A0.dtbo
 
-bb-floppy: $(OBJECTS)
-	$(CC) -o $@ $^ $(CFLAGS) $(LIBS)
 
-%.o: %.c $(INCLUDES)
-	$(CC) -c -o $@ $< $(CFLAGS)
+# Default target
+$(BIN) : $(BUILD_DIR)/$(BIN)
 
-bb-floppy.bo: tests/test-motor.bin
-	objcopy -B arm -I binary -O elf32-littlearm \
-		--redefine-sym _binary_tests_test_motor_bin_start=_binary_motor_bin_start \
-		--redefine-sym _binary_tests_test_motor_bin_end=_binary_motor_bin_end \
-		--redefine-sym _binary_tests_test_motor_bin_size=_binary_motor_bin_size $< $@
+# Actual target - depends on all .o files
+$(BUILD_DIR)/$(BIN) : $(OBJ)
+	mkdir -p $(@D)
+	$(CC) $(CFLAGS) $^ $(LIBS) -o $@
 
-%.bin: %.p
-		$(PASM) -V3 -b $<
+# Include all .d files . Created by gcc
+-include $(DEP)
+$(BUILD_DIR)/%.o : %.c
+	mkdir -p $(@D)
+	$(CC) $(CFLAGS) -MMD -c $< -o $@ 
+	
+$(BUILD_DIR)/%.bin: %.p
+	$(PASM) -V3 -b $<
 
-%.dtbo: %.dts
+$(BUILD_DIR)/.dtbo: %.dts
 	dtc -@ -O dtb -o $@ $<
 
-clean: rm -f *.o *.bin
+.PHONY: clean all
 
-.PHONY: all clean
+clean:
+	-rm $(BUILD_DIR)/$(BIN) $(OBJ) $(DEP)
+
+$(BUILD_DIR)/firmware.o: tests/test-motor.bin
+	touch $(patsubst %.o,%.d,$@)			# Just to make clean stop complaining
+	objcopy -B arm -I binary -O elf32-littlearm \
+		--redefine-sym _binary_tests_test_motor_bin_start=_binary_firmware_bin_start \
+		--redefine-sym _binary_tests_test_motor_bin_end=_binary_firmware_bin_end \
+		--redefine-sym _binary_tests_test_motor_bin_size=_binary_firmware_bin_size $< $@
+

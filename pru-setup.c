@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
-#include <libgen.h>
 
 #include <prussdrv.h>
 #include <pruss_intc_mapping.h>
@@ -11,9 +10,8 @@
 
 #define PRU_NUM0	0
 
-extern char firmware_data[]		asm("_binary_motor_bin_start");
-extern char firmware_data_size[]	asm("_binary_motor_bin_size");
-extern char firmware_data_end[]		asm("_binary_motor_bin_end");
+extern char _firmware_size[]		asm("_binary_firmware_bin_size");
+extern unsigned int firmware_data[]	asm("_binary_firmware_bin_start");
 
 struct pru * pru_setup(void)
 {
@@ -21,10 +19,7 @@ struct pru * pru_setup(void)
 	char * volatile ram;			// 8Kb // 0x2000 // 8192
 	char * volatile shared_ram;		// 12Kb	// 0x3000 // 12288
 
-#if 0
-	static char path_buf[512];
-	char firmware[512];
-#endif
+	int firmware_size = (int)(void *)_firmware_size;
 
 	struct pru * pru;
 
@@ -65,20 +60,7 @@ struct pru * pru_setup(void)
 	pru->ram = ram;
 	pru->shared_ram = shared_ram;
 
-	// The firmware must be in the same folder as the executable!
-#if 0
-	readlink("/proc/self/exe", path_buf, 512);
-	snprintf(firmware, 512, "%s/%s", dirname(path_buf), "tests/test-motor.bin");
-	printf("Firmware data size: %d\n", (size_t)((void *)firmware_data_size));
-	printf("4 bytes : 0x%02x 0x%02x 0x%02x 0x%02x\n",
-			firmware_data[0],
-			firmware_data[1],
-			firmware_data[2],
-			firmware_data[3]);
-	rc = prussdrv_exec_program(PRU_NUM0, firmware);
-#endif
-	rc = prussdrv_exec_code(PRU_NUM0, (const unsigned int *)firmware_data,
-			(size_t)((void *)firmware_data_size));
+	rc = prussdrv_exec_code(PRU_NUM0, firmware_data, firmware_size);
         if (rc) {
                 fprintf(stderr, "Failed to load firmware\n");
 		free(pru);
