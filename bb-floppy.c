@@ -48,6 +48,7 @@ static void leave(int sig)
 #define max(a,b) ((a > b) ? a : b)
 
 #define MASK 0x55555555 /* 0b010101010101 ... 010101 */
+#if 0
 void decode_data(unsigned char *buf, int len)
 {
 	unsigned int *output;
@@ -61,6 +62,7 @@ void decode_data(unsigned char *buf, int len)
 		odd_bits = *input;
 	}
 }
+#endif
 
 struct mfm_sector {
         int odd_info;
@@ -86,9 +88,10 @@ void bin_dump(unsigned char val)
 void decode_sector(unsigned char *buf)
 {
         unsigned int info;
+	unsigned int *test;
+	int i;
         struct mfm_sector *sector = (struct mfm_sector *)buf;
-        unsigned int odd = htobe32(((unsigned int *)buf)[0]);
-        unsigned int even = htobe32(((unsigned int *)buf)[1]);
+	/*
         hexdump(buf, 8);
 
         printf("Odd: 0x%08x\n", odd);
@@ -109,12 +112,15 @@ void decode_sector(unsigned char *buf)
         bin_dump(buf[4]);
         bin_dump(buf[4] & 0x55);
         bin_dump((buf[4] & 0x55) | ((buf[0] & 0x55) << 1));
+	*/
 
         info = (sector->odd_info & 0x55555555);
         info <<= 1;
         info |= (sector->even_info & 0x55555555);
 
         printf("Sector info: 0x%08x\n", info); 
+	//printf("Size of sector: 0x%x\n", sizeof(struct mfm_sector));
+	printf("Sector: %u\n", (info & 0x0000ff00) >> 8);
         return;
 }
 
@@ -122,7 +128,7 @@ int main(int argc, char **argv)
 {
 	int rc;
 
-	FILE *fp;
+	//FILE *fp;
 	int track_len = 0x1900;
         unsigned int * volatile counter;
 	unsigned int * volatile read_len;
@@ -163,10 +169,10 @@ int main(int argc, char **argv)
 	}
 
         memset(ram, 0x00, 0x2000);
+	memset(shared_ram, 0x00, track_len);
         signal(SIGINT, leave);
 
-        counter = (unsigned int *)(ram + 4);
-	read_len = (unsigned int *)shared_ram;
+	read_len = (unsigned int *)(ram + 4);
 	read_len[0] = track_len;
 
 	rc = prussdrv_exec_program(PRU_NUM0, "./bb-floppy.bin");
@@ -180,7 +186,7 @@ int main(int argc, char **argv)
 	        prussdrv_pru_wait_event(PRU_EVTOUT_0);
 	        prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
                 c = counter[0];
-                if (*(unsigned short *)(ram + 1) == 0xaaaa) {
+                if (*(unsigned short *)(ram + 2) == 0xaaaa) {
                         printf("%08x\n", *(unsigned int *)(ram + 8));
                         printf("%08x\n", *(unsigned int *)(ram + 12));
                         hexdump(ram + 8, 8);
@@ -198,20 +204,17 @@ int main(int argc, char **argv)
                 } else {
                         //printf("OOB: %u\n", c);
                 }
-                printf("%08x\n", *(unsigned int *)(ram + 8));
-                printf("%08x\n", *(unsigned int *)(ram + 12));
-                hexdump(ram + 8, 8);
-                bin_dump(ram + 10);
         }
 
-        printf("Magic: %x\n", ram[0]);
-        printf("Magic: %x\n", ram[1]);
-        printf("Magic: %x\n", ram[2]);
-        printf("Magic: %x\n", ram[3]);
+
+        printf("Trigger - byte: 0x%02x\n", ram[0]);
+        printf("Status - byte: 0x%02x\n", ram[1]);
+        printf("Server - word: 0x%04x\n", ((unsigned short *)ram)[1]);
+        printf("Bit remain: 0x%02x\n", ram[100]);
 
 
         //hexdump(ram + 0x200, track_len);
-	memcpy(buf, ram + 0x200, track_len);
+	memcpy(buf, shared_ram, track_len);
 	//printf("Total: %x\n", *(unsigned int *)(ram + 4));
 	//printf("Total: %x\n", *(unsigned int *)(ram + 8));
 	prussdrv_pru_disable(PRU_NUM0);

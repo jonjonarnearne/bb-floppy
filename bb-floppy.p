@@ -24,10 +24,6 @@
         sub reg, reg, 1
 .endm
 
-#define COUNTER r16
-.macro RESET
-        xor r16, r16, r16
-.endm
 
         // Register r0 -> r16  == Fixed
         // Register r17 -> r29 == Temp
@@ -35,23 +31,33 @@
 
 #define STATE_INITIAL           0
 #define STATE_FIND_SYNC         1 << 0
+#define STATE_READ_TRACK        1 << 1
+#define STATE_DONE              1 << 2
 
 .struct Data
         .u32 pruMem
+        .u32 sharedMem
         .u32 byteOffset 
+        .u32 dword
+        .u16 dwordIndex
         .u16 state
-        .u8  bitCounter
+        .u8  bitRemain
+        .u8  bitCount
         .u8  timer
 .ends
-.assign Data, r0, r2, RxData
+.assign Data, r0, r5.b2, RxData
 
 #define STATUS_TRIGGER_QUIT        0xff
 #define STATUS_SERVER_QUIT       0xaaaa
 .struct Status
         .u8   trigger
+        .u8   status
         .u16  server
+        .u32  trackLen
 .ends
-.assign Status, r3.b0, r3.b2, RxStatus
+.assign Status, r6, r7, RxStatus
+
+#define SYNC_WORD               0x4489
 
 START:
         LBCO    r0, C4, 4, 4    // Copy 4 bytes of memory from C4 + 4 (SYSCFG_REG)
@@ -69,27 +75,49 @@ START:
         SET PIN_HEAD_STEP
         SET PIN_DRIVE_ENABLE_MOTOR
 
+        // pruMem addr = 0x00
         xor RxData.pruMem, RxData.pruMem, RxData.pruMem
+        // pruShared addr = 0x10000
+        ldi RxData.sharedMem.w0, 0x0000
+        ldi RxData.sharedMem.w2, 0x0001
         // Set state to INITIAL
         xor RxData.state, RxData.state, RxData.state
 
         CLR PIN_DRIVE_ENABLE_MOTOR
 
-        jal r17, waitForHi
-        jal r17, initWaitForLo
+        jal r17, fn_waitForHi
+        // READ == HI
+        jal r17, fn_initWaitForLo
+        // READ == LOW
+        jal r17, fn_waitForHi
+        // READ == HI
         ldi RxData.state, STATE_FIND_SYNC
 
 main:
         QBEQ callFindSync, RxData.state, STATE_FIND_SYNC
+        QBEQ callReadTrack, RxData.state, STATE_READ_TRACK
+        QBEQ callDone, RxData.state, STATE_DONE
 
         lbbo RxStatus.trigger, RxData.pruMem, OFFSET(RxStatus.trigger), SIZE(RxStatus.trigger)
         QBEQ END, RxStatus.trigger, STATUS_TRIGGER_QUIT
+
         jmp main
 
 callFindSync:
-        jal r17, findSync
-        ldi RxData.state, 0
+        jal r17, fn_findSync
+        jal r17, fn_waitForHi
+        ldi r18.b0, 0x01
+        sbbo r18, RxData.pruMem, OFFSET(RxStatus.status), SIZE(RxStatus.status) 
         jmp main
+callReadTrack:
+        jal r17, fn_readTrack
+        jal r17, fn_waitForHi
+        ldi r18.b0, 0x02
+        sbbo r18, RxData.pruMem, OFFSET(RxStatus.status), SIZE(RxStatus.status) 
+        jmp main
+callDone:
+        sbbo RxData.bitRemain, RxData.pruMem, 100, SIZE(RxData.bitRemain)
+
 END:
         SET PIN_DRIVE_ENABLE_MOTOR
 
@@ -100,141 +128,133 @@ END:
 
         HALT
 
+fn_waitForHi:
 waitForHi:
         lbbo RxStatus.trigger, RxData.pruMem, OFFSET(RxStatus.trigger), SIZE(RxStatus.trigger)
         QBEQ END, RxStatus.trigger, STATUS_TRIGGER_QUIT
         QBBC waitForHi, PIN_READ_DATA
         jmp r17
 
+fn_initWaitForLo:
 initWaitForLo:
         lbbo RxStatus.trigger, RxData.pruMem, OFFSET(RxStatus.trigger), SIZE(RxStatus.trigger)
         QBEQ END, RxStatus.trigger, STATUS_TRIGGER_QUIT
         QBBS initWaitForLo, PIN_READ_DATA
         jmp r17
 
-findSync:
-        jmp r17
+fn_findSync:
+        xor RxData.dword, RxData.dword, RxData.dword
+        xor RxData.bitRemain, RxData.bitRemain, RxData.bitRemain
+        xor r18, r18, r18
+        ldi r18.w0, SYNC_WORD
+        ldi r18.w2, SYNC_WORD
 
-/*       
-        ldi r10.w0, #0x200      // Byte-storage offset
-        ldi r10.w2, #0          //
+time_to_low:
+        xor RxData.timer, RxData.timer, RxData.timer
+timer:
+        add  RxData.timer, RxData.timer, #1
+        lbbo RxStatus.trigger, RxData.pruMem, OFFSET(RxStatus.trigger), SIZE(RxStatus.trigger)
+        QBEQ END, RxStatus.trigger, STATUS_TRIGGER_QUIT
+        QBBS timer, PIN_READ_DATA
 
-//        ldi r15.w0, 0x1900     // Read one full track!
-//        ldi r15.w2, 0
-        ldi r25.w0, 0x0000
-        ldi r25.w2, 0x0001      // 0x10000
-        lbbo r15, r25, 0, 4     // Get readlen from host!
-
-        xor r14, r14, r14       // BitCounter
-        //ldi r15.w0, 1024+56     // Raw Bytes in sector Excl. SyncWords (0x5555 0x5555 0x4489 0x4489)
-        xor r16, r16, r16       // Counter
-        xor r19, r19, r19       // State
-        xor r20, r20, r20       // Curent haystack
-        xor r27, r27, r27
-        xor r28, r28, r28
-        ldi r29.w0, 0x0000
-        ldi r29.w2, 0x8000
-        ldi r2.w0, 0x0000
-        ldi r2.w2, 0xc000
-
-        ldi r19.b0, 1
-state:
-        // Find 1st
-        ldi r21.w0, 0x5555
-        ldi r21.w2, 0x5555
-        QBGT wait_for_lo, r19, #1 // r19 < 1
-        
-        // Find 2nd
-        xor r21, r21, r21
-        ldi r21.w0, 0x4489
-        ldi r21.w2, 0x4489
-        QBGT wait_for_lo, r19, #2 // r19 < 2
-
-        // Find Data
-        xor r21, r21, r21
-
-        // READ BITS FROM DRIVE
-wait_for_lo:
-        // Inc Counter
-        INC r16
-        lbbo r1.b0, r0, 0, 1
-        QBEQ END, r1.b0, #0xff
-        QBBS wait_for_lo, PIN_READ_DATA
-
-        //sbbo r16, r0, 4, 4
-        
-        QBGT short, r16, #140   // r16 < 140
-        QBGT med, r16, #190     // r16 < 190 
+        QBGT short, RxData.timer, #140   // timer < 140
+        QBGT med,   RxData.timer, #190   // timer < 190 
 long:
         // 0b0001 - 4 bits
-        and r27, r29, r20       // r27 = 0x80000000 & r20
-        lsr r27, r27, 31        // r27 >>= 31
-        lsl r28, r28, 1
-        or  r28, r28, r27
-        
-        lsl r20, r20, 1
-        add r14, r14, 1
+        ldi RxData.bitRemain, #3
+        lsl  RxData.dword, RxData.dword, 1
+        QBEQ found_it, RxData.dword, r18 
 med:
         // 0b001 - 3 bits
-        and r27, r29, r20       // r27 = 0x80000000 & r20
-        lsr r27, r27, 31        // r27 >>= 31
-        lsl r28, r28, 1
-        or  r28, r28, r27
-
-        lsl r20, r20, 1
-        add r14, r14, 1
+        ldi RxData.bitRemain, #2
+        lsl  RxData.dword, RxData.dword, 1
+        QBEQ found_it, RxData.dword, r18 
 short:
         // 0b01 - 2 bits
-        and r27, r2, r20       // r27 = 0xc0000000 & r20
-        lsr r27, r27, 30        // r27 >>= 30
-        lsl r28, r28, 2
-        or  r28, r28, r27
+        ldi RxData.bitRemain, #1
+        lsl  RxData.dword, RxData.dword, 1
+        QBEQ found_it, RxData.dword, r18 
 
-        lsl r20, r20, 2
-        add r14, r14, 2
-
-        or r20.b0, r20.b0, 0x01
+        ldi RxData.bitRemain, #0
+        lsl  RxData.dword, RxData.dword, 1
+        or   RxData.dword, RxData.dword, 1
+        QBEQ found_it, RxData.dword, r18 
         
+        xor r19, r19, r19
+        or r19, r19, r17
+        jal r17, fn_waitForHi
+        xor r17, r17, r17
+        or r17, r17, r19
+        jmp time_to_low
 
-wait_for_hi:
-        lbbo r1.b0, r0, 0, 1
-        QBEQ END, r1.b0, #0xff
-        QBBC wait_for_hi, PIN_READ_DATA
+found_it:
+        ldi RxData.state, STATE_READ_TRACK
+        jmp r17
 
-        // Reset the counter
-        RESET
+fn_readTrack:
+        lbbo RxStatus.trackLen, RxData.pruMem, OFFSET(RxStatus.trackLen), SIZE(RxStatus.trackLen)
+        lsr  RxStatus.trackLen, RxStatus.trackLen, #2      // trackLen / 4 = Number of DWORDS
+        xor  RxData.dword, RxData.dword, RxData.dword
+        xor  RxData.dwordIndex, RxData.dwordIndex, RxData.dwordIndex
+        xor  RxData.bitCount, RxData.bitCount, RxData.bitCount
+        xor  r20, r20, r20                              // Temp DWORD counter
 
-        // CHECK THE BITS WE HAVE READ
+rd_time_to_low:
+        xor RxData.timer, RxData.timer, RxData.timer
+rd_timer:
+        add  RxData.timer, RxData.timer, #1
+        lbbo RxStatus.trigger, RxData.pruMem, OFFSET(RxStatus.trigger), SIZE(RxStatus.trigger)
+        QBEQ END, RxStatus.trigger, STATUS_TRIGGER_QUIT
+        QBBS rd_timer, PIN_READ_DATA
 
-        QBEQ count, r21, r0              // Goto Bit Count check!
-        // We are comparing 32bit unsigned ints
+        QBGT rd_short, RxData.timer, #140   // timer < 140
+        QBGT rd_med,   RxData.timer, #190   // timer < 190 
+rd_long:
+        // 0b0001 - 4 bits
+        add RxData.bitCount, RxData.bitCount, #1
+        ldi RxData.bitRemain, #3
+        lsl  RxData.dword, RxData.dword, 1
+        QBEQ got_dword, RxData.bitCount, 32
+rd_med:
+        // 0b001 - 3 bits
+        add RxData.bitCount, RxData.bitCount, #1
+        ldi RxData.bitRemain, #2
+        lsl  RxData.dword, RxData.dword, 1
+        QBEQ got_dword, RxData.bitCount, 32
+rd_short:
+        // 0b01 - 2 bits
+        add RxData.bitCount, RxData.bitCount, #1
+        ldi RxData.bitRemain, #1
+        lsl  RxData.dword, RxData.dword, 1
+        QBEQ got_dword, RxData.bitCount, 32
+
+        add RxData.bitCount, RxData.bitCount, #1
+        ldi RxData.bitRemain, #0
+        lsl  RxData.dword, RxData.dword, 1
+        or   RxData.dword, RxData.dword, 1
+        QBEQ got_dword, RxData.bitCount, 32
+
+        and r19, r17, r17
+        jal r17, fn_waitForHi
+        and r17, r19, r19
+        jmp rd_time_to_low
+
+got_dword:
+        sbbo RxData.dword, RxData.sharedMem, RxData.dwordIndex, SIZE(RxData.dword)
+        add RxData.dwordIndex, RxData.dwordIndex, SIZE(RxData.dword)
+        add r20, r20, #1                // Inc dword counter
+
+        xor RxData.dword, RxData.dword, RxData.dword
+        xor RxData.bitCount, RxData.bitCount, RxData.bitCount
         
-        QBNE wait_for_lo, r20, r21      // r21 != r20
+        // Pass remaining bits on to next DWORD
+        qbeq finalize, RxData.bitRemain, #0
+        and  RxData.bitCount, RxData.bitCount, RxData.bitRemain
+        or   RxData.dword, RxData.dword, #1
+        
+finalize: 
+        qble rd_time_to_low, RxStatus.trackLen, r20   // branch if r20 <= RxStatus.trackLen
 
-        // Found match, give match to app, to show to user
-        sbbo r28, r0, 8, 4
-        sbbo r20, r0, 12, 4
-        MOV r31.b0, PRU0_ARM_INTERRUPT+16
+        ldi RxData.state, STATE_DONE
+        jmp r17
 
-        SET PIN_DEBUG
-        SET PIN_DEBUG
-        CLR PIN_DEBUG
-        CLR PIN_DEBUG
-
-        // Search for next match
-        INC r19
-        QBGT state, r19, 3     // r19 < 3
-
-count:   // Count bits
-        QBGT wait_for_lo, r14, #16   // Bit counter = r14, if r14 >= 16, continue (Branch on r14 < 16 ie. no branch r14 >= 16)
-
-
-        xor r14, r14, r14       // Reset Bit Counter
-
-        sbbo r20.w0, r0, r10, 2  // Store one word
-        add r10, r10, 2         // Inc buffer index
-        sub r15, r15, 2         // Sub Byte Counter
-        QBLT wait_for_lo, r15, #0       // ByteCounter r15 > 0
-
-
-*/
