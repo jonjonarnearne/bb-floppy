@@ -28,14 +28,8 @@
 .ends
 .assign REGS, r0, r0, GLOBAL
 
-START:
-        lbco r0, C4, 4, 4    // Copy 4 bytes of memory from C4 + 4 (SYSCFG_REG)
-        clr  r0.t4           // CLR Bit 4 -- Enable OCP master ports
-        sbco r0, C4, 4, 4    // Store 4 bytes of memory to C4 + 4 (SYSCFG_REG)
-
-        xor  GLOBAL.pruMem, GLOBAL.pruMem, GLOBAL.pruMem
+.macro SET_DEFAULT_PIN_STATE
         clr  PIN_DEBUG
-
         // Set all outputs HIGH
         set  PIN_WRITE_DATA
         set  PIN_WRITE_GATE
@@ -43,25 +37,55 @@ START:
         set  PIN_HEAD_DIR        // HIGH for decrease, LOW to increase
         set  PIN_HEAD_STEP
         set  PIN_DRIVE_ENABLE_MOTOR
+.endm
+
+START:
+        lbco r0, C4, 4, 4    // Copy 4 bytes of memory from C4 + 4 (SYSCFG_REG)
+        clr  r0.t4           // CLR Bit 4 -- Enable OCP master ports
+        sbco r0, C4, 4, 4    // Store 4 bytes of memory to C4 + 4 (SYSCFG_REG)
+
+        xor  GLOBAL.pruMem, GLOBAL.pruMem, GLOBAL.pruMem
+        SET_DEFAULT_PIN_STATE
 
         // Report that setup is done
         mov  r31.b0, PRU0_ARM_INTERRUPT+16
 
-        clr  PIN_DRIVE_ENABLE_MOTOR
 
 WAIT_FOR_COMMAND:
         lbbo interface, GLOBAL.pruMem, OFFSET(interface), \
                                        SIZE(interface)
-        qbne WAIT_FOR_COMMAND, interface.command, COMMAND_QUIT
+        qbeq QUIT, interface.command, COMMAND_QUIT
+        qbeq START_MOTOR, interface.command, COMMAND_START_MOTOR
+        qbeq STOP_MOTOR, interface.command, COMMAND_STOP_MOTOR
 
-        set  PIN_DRIVE_ENABLE_MOTOR
+        jmp  WAIT_FOR_COMMAND
 
+QUIT:       
+        SET_DEFAULT_PIN_STATE
 
-END:       
         ldi  interface.command, COMMAND_QUIT_ACK
         sbbo interface.command, GLOBAL.pruMem, \
                                 OFFSET(interface.command), \
                                 SIZE(interface)
         mov  r31.b0, PRU0_ARM_INTERRUPT+16
         halt
+
+START_MOTOR:
+        clr  PIN_DRIVE_ENABLE_MOTOR
+        ldi  interface.command, COMMAND_START_MOTOR_ACK
+        sbbo interface.command, GLOBAL.pruMem, \
+                                OFFSET(interface.command), \
+                                SIZE(interface)
+        mov  r31.b0, PRU0_ARM_INTERRUPT+16
+        jmp  WAIT_FOR_COMMAND
+
+STOP_MOTOR:
+        set  PIN_DRIVE_ENABLE_MOTOR
+        ldi  interface.command, COMMAND_STOP_MOTOR_ACK
+        sbbo interface.command, GLOBAL.pruMem, \
+                                OFFSET(interface.command), \
+                                SIZE(interface)
+        mov  r31.b0, PRU0_ARM_INTERRUPT+16
+        jmp  WAIT_FOR_COMMAND
+
 

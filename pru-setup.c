@@ -101,3 +101,28 @@ int pru_is_done(struct pru * pru)
 	return (intf->command == COMMAND_QUIT_ACK);
 }
 
+void pru_start_motor(struct pru * pru)
+{
+	volatile struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
+	intf->command = COMMAND_START_MOTOR;
+	prussdrv_pru_wait_event(PRU_EVTOUT_0);
+	prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
+	if (intf->command != COMMAND_START_MOTOR_ACK) {
+		printf("Hm, wrong ack on start!\n");
+	}
+	printf("Motor started\n");
+	return;
+}
+
+void pru_stop_motor(struct pru * pru)
+{
+	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
+	intf->command = COMMAND_STOP_MOTOR;
+	prussdrv_pru_wait_event(PRU_EVTOUT_0);
+	prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
+	if (intf->command != COMMAND_STOP_MOTOR_ACK) {
+		printf("Hm, wrong ack on stop!\n");
+	}
+	printf("Motor stopped\n");
+	return;
+}

@@ -11,4 +11,6 @@ void pru_wait_event(struct pru * pru);
 void pru_clear_event(struct pru * pru);
 void pru_send_quit(struct pru * pru);
 int pru_is_done(struct pru * pru);
+void pru_start_motor(struct pru * pru);
+void pru_stop_motor(struct pru * pru);
 #endif

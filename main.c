@@ -246,18 +246,30 @@ int main(int argc, char **argv)
 	if (!pru)
 		exit(1);
 
-        signal(SIGINT, int_handler);
-
 	// Wait for firmware init
 	pru_wait_event(pru);
 	pru_clear_event(pru);
 
+        signal(SIGINT, int_handler);
+
+	// The firmware is now waiting for command!
+	pru_start_motor(pru);
+	sleep(2);
+	pru_stop_motor(pru);
+	sleep(2);
+	pru_send_quit(pru);
+	while(!pru_is_done(pru)) {
+		sleep(1);
+	}
+
+	/*
 	for(;;) {
 		pru_wait_event(pru);
 		pru_clear_event(pru);
 		if (pru_is_done(pru))
 			break;
 	}
+	*/
 
 	pru_exit(pru);
 
