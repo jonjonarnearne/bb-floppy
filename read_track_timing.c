@@ -346,11 +346,13 @@ int read_track_timing(int argc, char ** argv)
 			}
 		}
 
-		fp = fopen(filename, "w");
-		fwrite(timing, sizeof(*timing), sample_count, fp);
-		fclose(fp);
+                if (filename) {
+                        fp = fopen(filename, "w");
+                        fwrite(timing, sizeof(*timing), sample_count, fp);
+                        fclose(fp);
+		        sprintf(filename, "%s%02d", fn, count - 1);
+                }
 
-		sprintf(filename, "%s%02d", fn, count - 1);
 	} while(--count);
 
 	pru_stop_motor(pru);
@@ -362,6 +364,52 @@ int read_track_timing(int argc, char ** argv)
 
 int write_track_timing(int argc, char ** argv)
 {
+        uint16_t *timing;
+        int rc, i, sample_count = 8192;//4096;
+
+        timing = malloc(sample_count * sizeof(*timing));
+        if (!timing) {
+                fprintf(stderr, "Couldn't alloc memory for samples!\n");
+                return -1;
+        }
+
+        for(i = 0; i < sample_count; i++) {
+                // 1 == 115ns high
+                // 135 + (sample * 10)
+                timing[i] = 319; // 01 = 2us bit-cell
+        }
+        // 4000ns - 675ns = 3325ns - 135 = 3190ns
+        // 6000ns - 675ns = 5325ns - 135 = 5190ns
+        // 8000ns - 675ns = 7325ns - 135 = 7190ns
+        // 0x4489
+        timing[500] = 319; 
+        timing[501] = 719;
+        timing[502] = 519;
+        timing[503] = 719;
+        timing[504] = 519;
+        timing[505] = 319; 
+        timing[506] = 719;
+        timing[507] = 519;
+        timing[508] = 719;
+        timing[509] = 519;
+        timing[510] = 319;
+        timing[511] = 319;
+
+        printf("Sending %d samples, (%d bytes)\n",
+                                                sample_count,
+                                sample_count * sizeof(*timing));
+        pru_start_motor(pru);
+	pru_reset_drive(pru);
+        pru_set_head_dir(pru, PRU_HEAD_INC);
+	rc = pru_write_timing(pru, timing, sample_count);
+        pru_stop_motor(pru);
+
+        printf("%d samples left in buffer\n", rc);
+
+
+        return 1;
+                            
+#if 0
 	FILE *fp;
 	int rc, sample_count;
         long file_size;
@@ -405,6 +453,7 @@ int write_track_timing(int argc, char ** argv)
 	free(timing);
 	return 0;
 
+#endif
 #if 0 
         c = 0;
 	while(!feof(fp)) {

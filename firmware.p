@@ -11,6 +11,7 @@
 #define PIN_HEAD_SELECT         r30.t3 // P9.28
 #define PIN_DRIVE_ENABLE_MOTOR  r30.t4 // P9.42
 #define PIN_WRITE_DATA          r30.t6 // P9.41
+                                // 0101 1111
 #define ALL_CTRL_HI             0x5f   // Set all these pins hi
 
 #define PIN_DEBUG_1             r30.t14 // P8.12
@@ -108,9 +109,10 @@ WAIT_FOR_COMMAND:
         qbeq WRITE_TRACK, interface.command, COMMAND_ERASE_TRACK
         qbeq WRITE_TRACK, interface.command, COMMAND_WRITE_TRACK
         qbeq READ_TRACK, interface.command, COMMAND_READ_TRACK
-        qbeq GET_BIT_TIMING, interface.command, COMMAND_GET_BIT_TIMING
+        qbeq READ_BIT_TIMING, interface.command, COMMAND_READ_BIT_TIMING
         qbeq WRITE_BIT_TIMING, interface.command, COMMAND_WRITE_BIT_TIMING
         qbeq TEST_TRACK_0, interface.command, COMMAND_TEST_TRACK_0
+        qbeq WRITE_TIMING, interface.command, COMMAND_WRITE_TIMING
 
         jmp  WAIT_FOR_COMMAND
 
@@ -219,7 +221,7 @@ WRITE_TRACK:
         jal  STACK.ret_addr, fnWrite_Track
         jmp  SEND_ACK
 
-GET_BIT_TIMING:
+READ_BIT_TIMING:
         //  We might try to read an entire track here.
         jal  STACK.ret_addr, fnWait_For_Hi
         jal  STACK.ret_addr, fnWait_For_Lo
@@ -229,6 +231,11 @@ GET_BIT_TIMING:
 WRITE_BIT_TIMING:
         //  We might try to read an entire track here.
         jal  STACK.ret_addr, fnWrite_Bit_Timing
+        jmp  SEND_ACK
+
+WRITE_TIMING:
+        //  We might try to read an entire track here.
+        jal  STACK.ret_addr, fnWrite_Timing
         jmp  SEND_ACK
 
 SEND_ACK:
@@ -1031,3 +1038,214 @@ write_bit_timing_break_loop:
         rcp  STACK.ret_addr, write_bit_timing.ret_addr
         jmp  STACK.ret_addr
 .leave write_bit_timing_scope
+
+.struct Write_Timing
+        .u16  timer
+        .u16  ram_offset        // Position of write pointer
+        .u16  ret_addr
+        .u16  mask
+        .u16  fnPtr_Write_Low
+        .u16  fnPtr_ret_addr
+        .u16  weak_bit
+        .u16  tmp
+        .u32  sample_count
+        .u32  flags
+.ends
+.enter write_timing_scope
+.assign Write_Timing, r19, r24, write_timing
+fnWrite_Timing:
+        rcp  write_timing.ret_addr, STACK.ret_addr
+
+        rcp  write_timing.sample_count, interface.read_count
+
+        rclr write_timing.ram_offset
+        rclr write_timing.flags
+
+        ldi  write_timing.fnPtr_Write_Low, fnWrite_Timing_Regular_Bit
+        ldi  write_timing.weak_bit, #8192 - 511 // #0xffff
+
+
+write_timing_wait_for_index_high:
+        M_CHECK_ABORT
+        qbbc write_timing_wait_for_index_high, PIN_INDEX
+
+write_timing_wait_index_falling:
+        M_CHECK_ABORT
+        qbbs write_timing_wait_index_falling, PIN_INDEX
+
+        clr  PIN_WRITE_GATE
+
+        // These are the 3 last instructions of the write_timing_LOOP
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+write_timing_LOOP:
+        ldi  write_timing.mask, #0x0fff
+        and  write_timing.mask, write_timing.mask, write_timing.ram_offset
+        qbne write_timing_wrong_offset, write_timing.mask, #0
+
+        ldi  write_timing.tmp, #0x1000
+        // Skip this if sample_count < 0x1000
+        qbgt write_timing_skip_interrupt, write_timing.sample_count, \
+                                                write_timing.tmp
+
+        ldi  r31.b0, PRU0_ARM_INTERRUPT+16
+        jmp  write_timing_check_ram_offset
+write_timing_skip_interrupt:
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+
+write_timing_check_ram_offset:
+        lsr  write_timing.mask, write_timing.ram_offset, #12
+        qbeq write_timing_reset_ram_offset, write_timing.mask, #2
+        nop0 r0, r0, r0
+        jmp  write_timing_write
+
+write_timing_reset_ram_offset:
+        // We are at offset 0x2000, reset the ram_offset.
+        rclr write_timing.ram_offset
+        jmp  write_timing_write
+
+write_timing_wrong_offset:
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+
+        // ---- 60 ns -- from write_timing_LOOP
+        // ---- 75 ns -- from we went HIGH
+write_timing_write:
+        // Load timer from host
+        lbbo write_timing.timer, GLOBAL.sharedMem, \
+                                        write_timing.ram_offset, \
+                                        SIZE(write_timing.timer)
+        // -- 15 ns
+        // Increment ram pointer
+        add  write_timing.ram_offset, write_timing.ram_offset, \
+                                        SIZE(write_timing.timer)
+        // --  5 ns
+        // ---- 20 ns -- from write_timing_write
+
+        nop0 r0, r0, r0
+        qbeq write_timing_set_weak, write_timing.sample_count, \
+                                    write_timing.weak_bit
+
+        ldi  write_timing.fnPtr_Write_Low, fnWrite_Timing_Regular_Bit
+        jmp  write_timing_check_index_pin
+write_timing_set_weak:
+        ldi  write_timing.fnPtr_Write_Low, fnWrite_Timing_Weak_Bit
+        nop0 r0, r0, r0
+        // ---- 40 ns -- from write_timing_write
+
+write_timing_check_index_pin:
+        // Check INDEX pin status
+        qbbc write_timing_index_low, PIN_INDEX
+        // --  5 ns
+
+        // Index is NOT asserted (PIN_INDEX == HIGH)
+        // Set the flag to break on low
+        set  write_timing.flags, BREAK_ON_IDX_LOW
+        jmp  write_timing_index_high
+
+write_timing_index_low:
+        // INDEX is asserted (PIN_INDEX == LOW)
+        // Check if the flag to break is set!
+        qbbs write_timing_BREAK_LOOP, write_timing.flags, BREAK_ON_IDX_LOW
+        nop0 r0, r0, r0
+        // 10ns
+write_timing_index_high:
+
+        // ---- 55 ns -- from write_timing_write
+        // ---- 115 ns -- from write_timing_LOOP
+        // ---- 130 ns -- from we went HIGH
+write_timing_timer_HIGH_LOOP:
+        dec  write_timing.timer
+        qbne write_timing_timer_HIGH_LOOP, write_timing.timer, #0
+        // 10ns per iteration
+
+
+        // The least time we have spent here is 145ns
+        // 135ns + (10 * iteration)
+        // With no iterations in the HIGH_LOOP
+
+// --------------- GO LOW - GO LOW - GO LOW -----------------------------
+        nop0 r0, r0, r0
+
+        // Now, we time the period we are low
+        jal  write_timing.fnPtr_ret_addr, write_timing.fnPtr_Write_Low
+        // We will keep PIN_WRITE_DATA LOW for appx. 675ns
+
+
+        nop0 r0, r0, r0
+        // Break the loop here if we have consumed all samples!
+        dec  write_timing.sample_count
+        qbne write_timing_LOOP, write_timing.sample_count, #0
+
+write_timing_BREAK_LOOP:
+        set  PIN_WRITE_GATE
+
+        rcp  interface.read_count, write_timing.sample_count
+        sbbo interface.read_count, GLOBAL.pruMem, OFFSET(interface.read_count), \
+                                               SIZE(interface.read_count)
+
+        rcp  STACK.ret_addr, write_timing.ret_addr
+        jmp  STACK.ret_addr
+
+fnWrite_Timing_Regular_Bit:
+        clr  PIN_WRITE_DATA
+        // 5ns
+        // We hold the write data low for 660ns 
+
+        ldi  write_timing.timer, #66
+        // 5ns
+write_timing_timer_LOW_LOOP:
+        dec  write_timing.timer
+        qbne write_timing_timer_LOW_LOOP, write_timing.timer, #0
+        // 10ns per iteration * 66 = 660ns
+
+        set  PIN_WRITE_DATA
+
+        jmp  write_timing.fnPtr_ret_addr
+
+fnWrite_Timing_Weak_Bit:
+        // 5ns
+        // We toggle the write data pin, to create a weak bit!
+
+        clr  PIN_WRITE_DATA
+
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+
+        set  PIN_WRITE_DATA
+
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+
+        clr  PIN_WRITE_DATA
+
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+
+        set  PIN_WRITE_DATA
+
+        // 66ns in loop!
+        ldi  write_timing.timer, #59
+write_timing_timer_WEAK_HI_LOOP:
+        dec  write_timing.timer
+        qbne write_timing_timer_WEAK_HI_LOOP, write_timing.timer, #0
+
+        //set  PIN_WRITE_DATA
+        jmp  write_timing.fnPtr_ret_addr
+        
+.leave write_timing_scope
+

@@ -68,4 +68,6 @@ int pru_read_bit_timing(struct pru * pru, uint16_t ** data);
 int pru_write_bit_timing(struct pru * pru, uint16_t *source,
                                                 int sample_count);
 int pru_test_track_0(struct pru * pru);
+int pru_write_timing(struct pru * pru, uint16_t *source,
+                                                int sample_count);
 #endif

@@ -320,7 +320,7 @@ int pru_read_bit_timing(struct pru * pru, uint16_t ** data)
         memset((unsigned char *)dest, 0x00, sample_count * sizeof(*dest));
 
         memset(pru->shared_ram, 0x00, 0x3000);
-	intf->command = COMMAND_GET_BIT_TIMING;
+	intf->command = COMMAND_READ_BIT_TIMING;
 
         while(1) {
                 prussdrv_pru_wait_event(PRU_EVTOUT_0);
@@ -328,7 +328,7 @@ int pru_read_bit_timing(struct pru * pru, uint16_t ** data)
 
                 // We read 0x1000 bytes at a time, from the 0x3000byte buffer
                 // jumping back and forth in sync with the PRU
-	        if (intf->command == COMMAND_GET_BIT_TIMING) {
+	        if (intf->command == COMMAND_READ_BIT_TIMING) {
                         memcpy(dest, source, 0x1000);
                         dest += 0x1000/sizeof(*dest);
                         sample_count -= 0x1000/sizeof(*dest);
@@ -338,7 +338,7 @@ int pru_read_bit_timing(struct pru * pru, uint16_t ** data)
                         else
                                 source -= 0x1000/sizeof(*dest);
 
-                } else if (intf->command == (COMMAND_GET_BIT_TIMING & 0x7f)) {
+                } else if (intf->command == (COMMAND_READ_BIT_TIMING & 0x7f)) {
                         break;
                 } else {
                         printf("Got wrong Ack: 0x%02x\n", intf->command);
@@ -524,5 +524,72 @@ int pru_test_track_0(struct pru * pru)
                 printf("Got wrong Ack: 0x%02x\n", intf->command);
 
 	return intf->argument;
+}
+
+int pru_write_timing(struct pru * pru, uint16_t *source,
+                                                int sample_count)
+{
+        uint8_t mul = 0;
+        uint16_t * volatile dest = (uint16_t * volatile)pru->shared_ram;
+        int copy_size, err_requests = 0;
+
+	volatile struct ARM_IF *intf = (volatile struct ARM_IF *)pru->ram;	
+        if (!pru->running) return sample_count;
+
+        intf->read_count = sample_count;
+
+        copy_size = (sample_count * sizeof(*source) > 0x1000) ? 0x1000 : sample_count * sizeof(*source);
+        memcpy(dest, source, copy_size);
+        source          += copy_size/sizeof(*source);
+        sample_count    -= copy_size/sizeof(*source);
+
+        mul = 1;
+        dest += 0x1000/sizeof(*dest);
+
+	intf->command = COMMAND_WRITE_TIMING;
+
+        while(1) {
+                // We spin here until PRU has consumed the first 0x1000 bytes.
+                prussdrv_pru_wait_event(PRU_EVTOUT_0);
+                prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
+
+                if (intf->command == COMMAND_WRITE_TIMING) {
+#if 0
+                        printf("INTERRUPT - sample_count: %d OFFSET: 0x%04x (%d)\n",
+                                        *(uint32_t  *)(pru->ram + 0x80),
+                                        *(uint16_t  *)(pru->ram + 0x90),
+                                        *(uint16_t  *)(pru->ram + 0x90));
+#endif
+                        // Replace one part of the buffer
+                        copy_size = (sample_count * sizeof(*source) > 0x1000)
+                                ? 0x1000 : sample_count * sizeof(*source);
+
+                        if (copy_size <= 0) {
+                                fprintf(stderr,
+                                "fatal -- pru request samples on empty buffer!"
+                                                                        "\n");
+                                return sample_count;
+                        }
+
+                        memcpy(dest, source, copy_size);
+                        source += copy_size/sizeof(*source);
+                        sample_count -= copy_size/sizeof(*source);
+
+                        if (++mul & 0x1) {
+                                dest += 0x1000/sizeof(*dest);
+                        } else {
+                                dest -= 0x1000/sizeof(*dest);
+                        }
+                        
+                } else if (intf->command ==
+                                (COMMAND_WRITE_TIMING & 0x7f)) {
+                        break;
+                } else {
+                        printf("Got wrong Ack: 0x%02x\n", intf->command);
+                        break;
+                }
+        }
+
+        return intf->read_count;
 }
 
