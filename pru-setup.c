@@ -296,7 +296,7 @@ void pru_read_raw_track(struct pru * pru, void * data, uint32_t len,
 	return;
 }
 
-int pru_get_bit_timing(struct pru * pru, uint16_t ** data)
+int pru_read_bit_timing(struct pru * pru, uint16_t ** data)
 {
         // Read from drive for 240.000.us!
         // 240.000us of 0b10101010 = 60.000 samples (0xea60)

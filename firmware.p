@@ -223,7 +223,7 @@ GET_BIT_TIMING:
         //  We might try to read an entire track here.
         jal  STACK.ret_addr, fnWait_For_Hi
         jal  STACK.ret_addr, fnWait_For_Lo
-        jal  STACK.ret_addr, fnGet_Bit_Timing
+        jal  STACK.ret_addr, fnRead_Bit_Timing
         jmp  SEND_ACK
 
 WRITE_BIT_TIMING:
@@ -793,7 +793,7 @@ fnGet_Erase:
         jmp  write_track.ret_addr                                               //  5ns
 .leave write_track_scope
 
-.struct Get_Bit_Timing
+.struct Read_Bit_Timing
         .u16  timer
         .u16  ram_offset        // Position of write pointer
         .u16  ret_addr
@@ -802,106 +802,106 @@ fnGet_Erase:
         .u32  total_time
         .u32  target_time
 .ends
-.enter get_bit_timing_scope
-.assign Get_Bit_Timing, r20, r24, get_bit_timing
-fnGet_Bit_Timing:
-        rcp  get_bit_timing.ret_addr, STACK.ret_addr
+.enter read_bit_timing_scope
+.assign Read_Bit_Timing, r20, r24, read_bit_timing
+fnRead_Bit_Timing:
+        rcp  read_bit_timing.ret_addr, STACK.ret_addr
 
-        rclr get_bit_timing.total_time
-        rclr get_bit_timing.ram_offset
+        rclr read_bit_timing.total_time
+        rclr read_bit_timing.ram_offset
 
         // Read for 240.000.012 ns ~ 240.000us = 1.2revolutions.
         // 240.000.012/30 = 8.000.000 = 0x007a.1200
-        //ldi  get_bit_timing.target_time.w0, #0x1200
-        //ldi  get_bit_timing.target_time.w2, #0x007a
+        //ldi  read_bit_timing.target_time.w0, #0x1200
+        //ldi  read_bit_timing.target_time.w2, #0x007a
 
         // Read for 200.000.010 ns ~ 200.000us = 1.0revolutions.
         // 200.000.010/30 = 6.666.667 loops = 0x0065.b9ab
-        ldi  get_bit_timing.target_time.w0, #0xb9ab
-        ldi  get_bit_timing.target_time.w2, #0x0065
+        ldi  read_bit_timing.target_time.w0, #0xb9ab
+        ldi  read_bit_timing.target_time.w2, #0x0065
 
         // 400.000.000/30 = 13333333 
-        //ldi  get_bit_timing.target_time.w0, #0x7356
-        //ldi  get_bit_timing.target_time.w2, #0x00cb
+        //ldi  read_bit_timing.target_time.w0, #0x7356
+        //ldi  read_bit_timing.target_time.w2, #0x00cb
 
         // 240.000us = 120.000 bits,
         // 120.000 * 0b10101010 (worst case) = 120.000/2 = 60000 samples
         // 120.000 bits / 2 = 60.000 = 0xea60
-        //ldi  get_bit_timing.sample_count.w0, #0xea60
-        //ldi  get_bit_timing.sample_count.w2, #0x0000
+        //ldi  read_bit_timing.sample_count.w0, #0xea60
+        //ldi  read_bit_timing.sample_count.w2, #0x0000
 
         // 200.000 bits = 100.000 samples 0x186a0
-        ldi  get_bit_timing.sample_count.w0, #0x86a0
-        ldi  get_bit_timing.sample_count.w2, #0x0001
+        ldi  read_bit_timing.sample_count.w0, #0x86a0
+        ldi  read_bit_timing.sample_count.w2, #0x0001
 
-get_bit_timing_wait_index_high:
+read_bit_timing_wait_index_high:
         M_CHECK_ABORT
-        qbbc get_bit_timing_wait_index_high, PIN_INDEX
+        qbbc read_bit_timing_wait_index_high, PIN_INDEX
 
-get_bit_timing_wait_index_falling:
+read_bit_timing_wait_index_falling:
         M_CHECK_ABORT
-        qbbs get_bit_timing_wait_index_falling, PIN_INDEX
+        qbbs read_bit_timing_wait_index_falling, PIN_INDEX
 
-get_bit_timing_get_next_bit:
+read_bit_timing_get_next_bit:
         // Based on measure with oscilloscope,
         // The PIN_READ_DATA pin is held LOW
         // for 700ns before we are back HIGH
         jal  STACK.ret_addr, fnWait_For_Hi
 
         // Measure the time it takes before we get a lo
-        rclr get_bit_timing.timer
-get_bit_timing_timer:
+        rclr read_bit_timing.timer
+read_bit_timing_timer:
         M_CHECK_ABORT                                           //20 ns
-        inc  get_bit_timing.timer
-        qbbs get_bit_timing_timer, PIN_READ_DATA 
+        inc  read_bit_timing.timer
+        qbbs read_bit_timing_timer, PIN_READ_DATA 
 
-get_bit_timing_store:
-        sbbo get_bit_timing.timer, GLOBAL.sharedMem, get_bit_timing.ram_offset, \
-                                                SIZE(get_bit_timing.timer)
-        add  get_bit_timing.ram_offset, get_bit_timing.ram_offset, \
-                                        SIZE(get_bit_timing.timer)
+read_bit_timing_store:
+        sbbo read_bit_timing.timer, GLOBAL.sharedMem, read_bit_timing.ram_offset, \
+                                                SIZE(read_bit_timing.timer)
+        add  read_bit_timing.ram_offset, read_bit_timing.ram_offset, \
+                                        SIZE(read_bit_timing.timer)
 
-        dec  get_bit_timing.sample_count
+        dec  read_bit_timing.sample_count
         // We add the magic number #22 ~ 675ns (21 ~ 630ns),
         // to get the time when we are lo
         // TODO: consider changing this value to 23 ~ 690ns,
         // as we measured the low to be 700ns
-        add  get_bit_timing.total_time, get_bit_timing.total_time, #21
-        add  get_bit_timing.total_time, get_bit_timing.total_time, \
-                                        get_bit_timing.timer
+        add  read_bit_timing.total_time, read_bit_timing.total_time, #21
+        add  read_bit_timing.total_time, read_bit_timing.total_time, \
+                                        read_bit_timing.timer
 
         // Enable writing of more than 0x3000 bytes.
         // We write 0x1000, and alert the ARM side,
         // we continue to write 0x1000 more, while ARM reads the last 0x1000.
         // Then jump back to 0x00, for the next 0x1000
-        ldi  get_bit_timing.timer, 0x0fff;
-        and  get_bit_timing.timer, get_bit_timing.timer, get_bit_timing.ram_offset
-        qbne get_bit_timing_skip_interrupt, get_bit_timing.timer, #0
+        ldi  read_bit_timing.timer, 0x0fff;
+        and  read_bit_timing.timer, read_bit_timing.timer, read_bit_timing.ram_offset
+        qbne read_bit_timing_skip_interrupt, read_bit_timing.timer, #0
         // We have read 0x1000 - Notify ARM
         ldi  r31.b0, PRU0_ARM_INTERRUPT+16
         // We limit the ram_offset to 0x1fff here
-        ldi  get_bit_timing.timer, 0x1000;
-        and  get_bit_timing.ram_offset, get_bit_timing.ram_offset, get_bit_timing.timer
+        ldi  read_bit_timing.timer, 0x1000;
+        and  read_bit_timing.ram_offset, read_bit_timing.ram_offset, read_bit_timing.timer
 
-get_bit_timing_skip_interrupt:
+read_bit_timing_skip_interrupt:
         // Break if we have exhausted our memory
-        qbeq get_bit_timing_done, get_bit_timing.sample_count, #0
+        qbeq read_bit_timing_done, read_bit_timing.sample_count, #0
 
         // Get next bit-time, while total_time < target_time
-        qblt get_bit_timing_get_next_bit, get_bit_timing.target_time, \
-                                          get_bit_timing.total_time
+        qblt read_bit_timing_get_next_bit, read_bit_timing.target_time, \
+                                          read_bit_timing.total_time
         
-get_bit_timing_done:
-        sbbo get_bit_timing.total_time, GLOBAL.pruMem, \
+read_bit_timing_done:
+        sbbo read_bit_timing.total_time, GLOBAL.pruMem, \
                                         OFFSET(interface.read_count), \
                                         SIZE(interface.read_count)
-        sbbo get_bit_timing.sample_count, GLOBAL.pruMem, \
+        sbbo read_bit_timing.sample_count, GLOBAL.pruMem, \
                                         OFFSET(interface.sync_word), \
                                         SIZE(interface.sync_word)
 
-        rcp  STACK.ret_addr, get_bit_timing.ret_addr
+        rcp  STACK.ret_addr, read_bit_timing.ret_addr
         jmp  STACK.ret_addr
-.leave get_bit_timing_scope
+.leave read_bit_timing_scope
 
 .struct Write_Bit_Timing
         .u16  timer

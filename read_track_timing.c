@@ -174,7 +174,7 @@ int read_track_timing(int argc, char ** argv)
 
         pru_start_motor(pru);
         pru_set_head_side(pru, track_side);
-	sample_count = pru_get_bit_timing(pru, &timing);
+	sample_count = pru_read_bit_timing(pru, &timing);
         pru_stop_motor(pru);
 
 	printf("\tGot %d samples\n", sample_count);
@@ -250,7 +250,7 @@ int read_timing(int argc, char ** argv)
 			pru_set_head_side(pru, PRU_HEAD_UPPER);
 
 		printf("Read track %d: head: %d :: ", i >> 1, i & 1);
-		sample_count = pru_get_bit_timing(pru, &timing);
+		sample_count = pru_read_bit_timing(pru, &timing);
 		if (!sample_count) {
 			fprintf(stderr, "Got zero samples\n");
 			break;
