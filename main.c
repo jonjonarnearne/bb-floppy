@@ -119,7 +119,7 @@ unsigned int decode_mfm_sector(unsigned char *buf, int mfm_sector_len)
 	printf("0x%08x: Format magic: 0x%02x, Cylinder Number: %u, Head: %s, sector_number: %u - until end 0x%u\n",
                         info,
                         (info & 0xff000000) >> 24,
-                        ((info & 0x00ff0000) >> 16) >> 2,
+                        ((info & 0x00ff0000) >> 16) >> 1,
                         (((info & 0x00ff0000) >> 16) & 0x1) ? "LOWER" : "UPPER",
                         (info & 0x0000ff00) >> 8,
                         (info & 0x000000ff));
@@ -183,6 +183,7 @@ int init_read(int argc, char ** argv)
 		return -1;
 	}
 
+        pru_start_motor(pru);
 	sector = buf;
 	for (i = 0; i < 11; i++) {
 		// The firmware is hardcoded to read 0x1900 bytes...
@@ -191,6 +192,8 @@ int init_read(int argc, char ** argv)
 		memcpy(sector, pru->shared_ram, 0x1900);
 		sector += 0x1900;
 	}
+        pru_stop_motor(pru);
+
 	sector = buf;
 	for (i = 0; i < 11; i++) {
 		decode_track(sector, 0x1900, 1);
@@ -209,22 +212,45 @@ int init_identify(int argc, char ** argv)
 	//int target_head = (block_num % 22) / 11;
 	unsigned int sector_info;
 	int cur_cyl;
-	pru_read_sector(pru);
-	sector_info = decode_mfm_sector(pru->shared_ram, 0x1900);
-	cur_cyl = ((sector_info & 0x00ff0000) >> 16) >> 2;
 
-	/*
-	if (cur_cyl < target_cyl)
-		pru_set_head_dir(pru, PRU_HEAD_INC);
-	else
-		pru_set_head_dir(pru, PRU_HEAD_DEC);
-	*/
-	
-	pru_step_head(pru, abs(target_cyl - cur_cyl));
-	pru_read_sector(pru);
+        pru_start_motor(pru);
+        pru_read_sector(pru);
 	sector_info = decode_mfm_sector(pru->shared_ram, 0x1900);
+	cur_cyl = ((sector_info & 0x00ff0000) >> 16) >> 1;
+        
+        if (cur_cyl != target_cyl) {
+                if (cur_cyl < target_cyl)
+                        pru_set_head_dir(pru, PRU_HEAD_INC);
+                else
+                        pru_set_head_dir(pru, PRU_HEAD_DEC);
+
+	        pru_step_head(pru, abs(target_cyl - cur_cyl));
+        }
+
+        printf("Head correct!\n");
+        pru_stop_motor(pru);
 
 	return 0;
+}
+
+int reset_drive(int argc, char ** argv)\
+{
+	unsigned int sector_info;
+        int cur_cyl;
+
+        pru_start_motor(pru);
+        pru_read_sector(pru);
+	sector_info = decode_mfm_sector(pru->shared_ram, 0x1900);
+	cur_cyl = ((sector_info & 0x00ff0000) >> 16) >> 1;
+
+        if (cur_cyl) {
+                pru_set_head_dir(pru, PRU_HEAD_DEC);
+                pru_step_head(pru, cur_cyl);
+        }
+
+        printf("Head correct!\n");
+        pru_stop_motor(pru);
+        return 0;
 }
 
 typedef int (*fn_init_ptr)(int, char **);
@@ -236,6 +262,7 @@ static const struct modes {
 	{ "identify", "print name of disk, and exit", init_identify },
 	{ "read", "read entire disk to file", init_read },
 	{ "test", "test the motor control, one second test", init_test },
+	{ "reset", "Reset head to cylinder 0", reset_drive },
 	{ NULL, NULL }
 };
 

@@ -104,6 +104,16 @@ QUIT:
 
 START_MOTOR:
         clr  PIN_DRIVE_ENABLE_MOTOR
+
+        // 50 ms seems to work
+        // 10ns * 5,000,000 = 50,000,000us = 50ms
+        // 5,000,000 = 0x004c 4b40
+        ldi  r20.w0, #0x4b40
+        ldi  r20.w2, #0x004c
+spin_up_time:
+        dec  r20
+        qbne spin_up_time, r20, #0
+
         ldi  interface.command, COMMAND_START_MOTOR_ACK
         sbbo interface.command, GLOBAL.pruMem, \
                                 OFFSET(interface.command), \
@@ -147,12 +157,10 @@ STEP_HEAD:
         
 
 READ_SECTOR:
-        clr  PIN_DRIVE_ENABLE_MOTOR
         jal  STACK.ret_addr, fnWait_For_Hi
         jal  STACK.ret_addr, fnWait_For_Lo
         jal  STACK.ret_addr, fnFind_Sync
         jal  STACK.ret_addr, fnRead_Sector
-        set  PIN_DRIVE_ENABLE_MOTOR
 
         and  interface.command, interface.command, 0x7f
         sbbo interface.command, GLOBAL.pruMem, \
@@ -311,9 +319,8 @@ no_bits_remain:
 .leave read_sector_scope
 
 .struct Step_Head
-        .u8   step_count
-        .u8   unused
-        .u16  unused2
+        .u16  step_count
+        .u16  unused
         .u32  ret_addr
         .u32  timer
 .ends
@@ -321,43 +328,58 @@ no_bits_remain:
 .assign Step_Head, r20, r22, step_head
 fnStep_Head:
         rcp  step_head.ret_addr, STACK.ret_addr
-        lsl  step_head.step_count, interface.argument, #1 // argument * 2 = step_count
-
-        clr  PIN_DRIVE_ENABLE_MOTOR
-        clr  PIN_HEAD_DIR
-        
-        ldi  step_head.timer.w0, #800
-        ldi  step_head.timer.w2, #0x0000
-del8us:
-        dec  step_head.timer
-        qbne del8us, step_head.timer, #0
-
-        ldi  step_head.step_count, #4
+        rcp  step_head.step_count, interface.argument    
+        qblt end_step_head, step_head.step_count, #80 //Programming error
+        //ldi  step_head.step_count, #1
 do:
+
+        // 10ns * 8,000 = 800,000us = 0.08ms
+        // 8,000 = #8000
+        // 10ns * 5,000 = 500,000us = 0.05ms
+        // 5,000 = #5000
+        ldi  step_head.timer.w0, #5000
+        ldi  step_head.timer.w2, #0x0000
+del1300ms:
+        dec  step_head.timer
+        qbne del1300ms, step_head.timer, #0
+
         clr  PIN_HEAD_STEP
 
-        // Min 0.8us = 800ns
-        ldi  step_head.timer.w0, #80
+        ldi  step_head.timer.w0, #5000
         ldi  step_head.timer.w2, #0x0000
-del800ns:
+del2300ms:
         dec  step_head.timer
-        qbne del800ns, step_head.timer, #0
+        qbne del2300ms, step_head.timer, #0
 
         set  PIN_HEAD_STEP
 
-        // Min 3ms = 3 000 000ns = 300 000 = 0x 00 04 93 e0
-        ldi  step_head.timer.w0, #0x93e0 // 3ms
-        ldi  step_head.timer.w2, #0x0004
-del3ms:
-        dec  step_head.timer
-        qbne del3ms, step_head.timer, #0
-
         dec  step_head.step_count
-        qbne do, step_head.step_count, #0
+        qbeq done, step_head.step_count, #0
 
-        //set  PIN_HEAD_DIR
-        set  PIN_DRIVE_ENABLE_MOTOR
+        // DELAY PER CYLINDER - Increment
+        // Min 8ms = 8 000 000ns = 800 000 = 0x 00 0c 35 00
+        // Min 10ms = 10 000 000ns = 1 000 000 = 0x 00 0c 35 00
+        // Min 20ms = 20 000 000ns = 2 000 000 = 0x 00 1e 84 80
+        ldi  step_head.timer.w0, #0x3500
+        ldi  step_head.timer.w2, #0x000c
+del8ms:
+        dec  step_head.timer
+        qbne del8ms, step_head.timer, #0
+        jmp do
 
+done:
+        // Wait for head to settle
+        // 10ns * 3,000,000 = 30,000,000us = 30ms
+        // 3,000,000 = 0x002d c6c0
+        // 10ns * 5,000,000 = 50,000,000us = 50ms
+        // 5,000,000 = 0x004c 4b40
+        ldi  step_head.timer.w0, #0x4b40
+        ldi  step_head.timer.w2, #0x004c
+del30ms:
+        dec  step_head.timer
+        qbne del30ms, step_head.timer, #0
+
+end_step_head:
         rcp  STACK.ret_addr, step_head.ret_addr
         jmp  STACK.ret_addr
 .leave step_head_scope

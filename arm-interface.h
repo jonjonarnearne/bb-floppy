@@ -19,7 +19,7 @@
 #ifndef __GNUC__
 .struct ARM_IF
         .u8  command
-        .u8  unused 
+        .u8  unused
         .u16 argument
         .u32 tmp
 .ends
@@ -33,7 +33,7 @@
 struct ARM_IF {
 	uint8_t  volatile command;
 	uint8_t  volatile unused;
-	uint16_t volatile argument;
+        uint16_t volatile argument;
         uint32_t volatile tmp;
 }__attribute__((packed));
 

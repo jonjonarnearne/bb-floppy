@@ -167,8 +167,9 @@ void pru_set_head_dir(struct pru * pru, enum pru_head_dir dir)
 	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
         if (!pru->running) return;
 
-	intf->command = COMMAND_SET_HEAD_DIR;
+        // IMPORTANT: SET ARGUMENT BEFORE WE SET THE COMMAND!
 	intf->argument = (dir == PRU_HEAD_INC) ? 1 : 0;
+	intf->command = COMMAND_SET_HEAD_DIR;
         prussdrv_pru_wait_event(PRU_EVTOUT_0);
         prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
 	if (intf->command != (COMMAND_SET_HEAD_DIR & 0x7f))
@@ -183,9 +184,10 @@ void pru_step_head(struct pru * pru, uint16_t count)
         if (!pru->running) return;
 
 	printf("Request to step: %d times\n", count);
-	intf->command = COMMAND_STEP_HEAD;
 	if (count > 80) count = 80;
+        // IMPORTANT: SET ARGUMENT BEFORE WE SET THE COMMAND!
 	intf->argument = count;
+	intf->command = COMMAND_STEP_HEAD;
         prussdrv_pru_wait_event(PRU_EVTOUT_0);
         prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
 	if (intf->command != (COMMAND_STEP_HEAD & 0x7f))
