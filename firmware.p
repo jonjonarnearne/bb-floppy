@@ -13,15 +13,16 @@
 #define PIN_WRITE_DATA          r30.t6 // P9.41
 #define ALL_CTRL_HI             0x5f   // Set all these pins hi
 
-#define PIN_DEBUG               r30.t14 // P8.12
+#define PIN_DEBUG_1             r30.t14 // P8.12
+#define PIN_DEBUG               r30.t15 // P8.11
 
 // Inputs
 #define PIN_READY               r31.t5  // P9.27
 #define PIN_TRACK_ZERO          r31.t7  // P9.25
 #define PIN_READ_DATA           r31.t16 // P9.24
+#define PIN_INDEX               r31.t14 // P8.16
 
 #define PIN_TEST                r31.t15 // P8.15
-#define PIN_UNUSED              r31.t14 // P8.16
 
 #define SYNC_WORD               0x4489
 #define SECT_OFST               #11
@@ -133,6 +134,7 @@ START_MOTOR:
 spin_up_time:
         dec  r5
         qbne spin_up_time, r5, #0
+
         jmp  SEND_ACK
 
 STOP_MOTOR:
@@ -778,10 +780,34 @@ fnGet_Bit_Timing:
 
         rclr get_bit_timing.total_time
         rclr get_bit_timing.ram_offset
-        ldi  get_bit_timing.sample_count.w0, #0xc3b4 // 100200 / 2
-        ldi  get_bit_timing.sample_count.w2, #0x0000
+
+        // Read for 240.000.012 ns ~ 240.000us = 1.2revolutions.
+        // 240.000.012/30 = 8.000.000 = 0x007a.1200
+        //ldi  get_bit_timing.target_time.w0, #0x1200
+        //ldi  get_bit_timing.target_time.w2, #0x007a
+
+        // Read for 200.000.010 ns ~ 200.000us = 1.0revolutions.
+        // 200.000.010/30 = 6.666.667 loops = 0x0065.b9ab
         ldi  get_bit_timing.target_time.w0, #0xb9ab
         ldi  get_bit_timing.target_time.w2, #0x0065
+
+        // 400.000.000/30 = 13333333 
+        //ldi  get_bit_timing.target_time.w0, #0x7356
+        //ldi  get_bit_timing.target_time.w2, #0x00cb
+
+        // 240.000us = 120.000 bits,
+        // 120.000 * 0b10101010 (worst case) = 120.000/2 = 60000 samples
+        // 120.000 bits / 2 = 60.000 = 0xea60
+        //ldi  get_bit_timing.sample_count.w0, #0xea60
+        //ldi  get_bit_timing.sample_count.w2, #0x0000
+
+        // 200.000 bits = 100.000 samples 0x186a0
+        ldi  get_bit_timing.sample_count.w0, #0x86a0
+        ldi  get_bit_timing.sample_count.w2, #0x0001
+
+get_bit_timing_wait_index:
+        M_CHECK_ABORT
+        qbbs get_bit_timing_wait_index, PIN_INDEX
 
 get_bit_timing_get_next_bit:
         jal  STACK.ret_addr, fnWait_For_Hi
@@ -800,8 +826,8 @@ get_bit_timing_store:
                                         SIZE(get_bit_timing.timer)
 
         dec  get_bit_timing.sample_count
-        // We add the magic number #25 to get the time when we are lo
-        add  get_bit_timing.total_time, get_bit_timing.total_time, #25
+        // We add the magic number #22 ~ 675ns (21 ~ 630ns) to get the time when we are lo
+        add  get_bit_timing.total_time, get_bit_timing.total_time, #21
         add  get_bit_timing.total_time, get_bit_timing.total_time, \
                                         get_bit_timing.timer
 

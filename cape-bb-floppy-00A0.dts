@@ -26,29 +26,33 @@
 
 	/* State the resources this cape uses: 10 Pins
      * 6 Outputs:
-            Head Select     - 32
-            Write Enable    - 24
-            Write Data      - 22
-            Step            - 20
-            Direction       - 18
-            Motor Enable    - 16
-            |Drive Select   - 12
+            Head Select     - 
+            Write Enable    -
+            Write Data      
+            Step           
+            Direction     
+            Motor Enable
+            |Drive Select 
      * 4 Inputs:
-            Read Data       - 30
-            Write Protect   - 28
-            Track 0         - 26
-            Index           -  8
+            Read Data    
+            Track 0     
+            Ready      
+            Index     
+	    Chng         
+	    WriteProtect
 
 		"pruss";
     */
 	exclusive-use =
-		"P8.15",        /* Input */
-		"P8.16",        /* Input */
+		"P8.15",        /* Input - (CHNG | WRITE_PROT?)*/
+		"P8.16",        /* Input - Index */
 		"P9.24",        /* Input - ReadData */
 		"P9.25",        /* Input - Track 0 */
 		"P9.27",        /* Input - Ready */
 
-                "P8.12",        /* Output - Debug */        
+                "P8.11",        /* Output - Unused */        
+                "P8.12",        /* Output - Unused */        
+
 		"P9.28",        /* Output */
 		"P9.29",        /* Output */
 		"P9.30",        /* Output */
@@ -69,7 +73,9 @@
                     0x1ac 0x26 /* P9_25 = pr1_pru0_pru_r31_7  ( MODE6 | INPUT )             */
                     0x1a4 0x2e /* P9_27 = pr1_pru0_pru_r31_5  ( MODE6 | INPUT | DISABLE )   */
 
+                    0x034 0x16 /* P8_11 = pr1_pru0_pru_r30_15 ( MODE6 | OUTPUT | PULL UP )  */
                     0x030 0x16 /* P8_12 = pr1_pru0_pru_r30_14 ( MODE6 | OUTPUT | PULL UP )  */
+
                     0x19c 0x15 /* P9_28 = pr1_pru0_pru_r30_3  ( MODE5 | OUTPUT | PULL UP )  */
                     0x194 0x15 /* P9_29 = pr1_pru0_pru_r30_1  ( MODE5 | OUTPUT | PULL UP )  */
                     0x198 0x15 /* P9_30 = pr1_pru0_pru_r30_2  ( MODE5 | OUTPUT | PULL UP )  */

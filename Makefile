@@ -17,7 +17,7 @@ $(info $$OBJ id [${OBJ}])
 DEP=$(OBJ:%.o=%.d)
 
 all: $(BIN)
-cape: cape-bb-floppy-00A0.dtbo
+cape: $(BUILD_DIR)/cape-bb-floppy-00A0.dtbo
 
 
 # Default target
@@ -37,7 +37,7 @@ $(BUILD_DIR)/%.o : %.c
 $(BUILD_DIR)/%.bin: %.p
 	$(PASM) -V3 -b $< $(patsubst %.bin,%,$@)
 
-$(BUILD_DIR)/.dtbo: %.dts
+$(BUILD_DIR)/%.dtbo: %.dts
 	dtc -@ -O dtb -o $@ $<
 
 .PHONY: clean all

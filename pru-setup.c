@@ -298,7 +298,9 @@ void pru_read_raw_track(struct pru * pru, void * data, uint32_t len,
 
 int pru_get_bit_timing(struct pru * pru, uint16_t ** data)
 {
-        int init_samp_count, sample_count = 0xc3b4; // This is 50100 samples - 100200 bits
+        // Read from drive for 240.000.us!
+        // 240.000us of 0b10101010 = 60.000 samples (0xea60)
+        int init_samp_count, sample_count = 0x186a0; //0xea60;
 
         uint8_t mul = 0;
         uint16_t *dest;
@@ -346,11 +348,9 @@ int pru_get_bit_timing(struct pru * pru, uint16_t ** data)
         if (sample_count > 0) 
                 memcpy(dest, source, 0x1000);
 
-	/*
         printf("Sampled %d\n", intf->read_count);
         printf("Sampled %d ns\n", intf->read_count * 30);
         printf("Sampled %d us\n", intf->read_count * 30 / 1000);
-	*/
 
 	return (init_samp_count - intf->sync_word);
 }

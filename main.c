@@ -702,6 +702,11 @@ int reset_drive(int argc, char ** argv)
  * and store timing information to file
  * the timing is an array of unsigned 16-bit integers.
  * Multiply the numbers with 30, to get nano-seconds.
+ * 
+ * TODO: Implement full disk read that will read all timings,
+ * and write to special container file.
+ * The file structure must account for variable sample_count!
+ * Then implement a function to write back the samples to a new disk.
  * */
 int read_timing(int argc, char ** argv)
 {
@@ -765,28 +770,67 @@ int read_timing(int argc, char ** argv)
         return 0;
 }
 
+/* Scan backwards trough bit timing,
+ * and return the start of the first sector gap in the timing array */
+static int find_gap_start(const uint16_t * timing, const int sample_count,
+								int *len) {
+	int i, rc = 0, c = 0, max = 0;
+
+	for(i=sample_count; i >= 0; i--) { 
+		if (timing[i] < 140) {
+			c++;
+			continue;
+		} 
+		if ( c > 100) {
+			printf("Potential gap @ %d: %d samples long\n", i, c);
+		}
+		if ( c >= max ) {
+			max = c;
+			rc = i;
+		}
+		c = 0;
+	}
+
+	/* return the len of the consequtive samples here! */
+	if (len)
+		*len = max;
+
+	return rc;
+}
+
 int read_track_timing(int argc, char ** argv)
 {
+	int opt, sample_count, i, c, gap_start, gap_end, gap_len;
+	char *filename = NULL;
 	FILE *fp;
-        uint16_t *timing;
-	int sample_count, i;
+        uint16_t *timing = NULL;
 	uint32_t info, data[3] = {0,0,0};
+	enum pru_head_side track_side = PRU_HEAD_UPPER;
 
-
-	if (argc != 2) {
-		usage();
-		printf("You must give a filename to a timing file\n");
-		return -1;	
+	while((opt = getopt(argc, argv, "-l")) != -1) {
+		switch(opt) {
+		case 'l':
+			track_side = PRU_HEAD_LOWER;
+			break;
+		case 1:
+			// If you specify a filename, we will save the data to that file.
+			filename = optarg;
+			printf("Filename detected: %s\n", filename);
+		}
 	}
 
         pru_start_motor(pru);
+        pru_set_head_side(pru, track_side);
 	sample_count = pru_get_bit_timing(pru, &timing);
         pru_stop_motor(pru);
 
 	printf("\tGot %d samples\n", sample_count);
+	gap_start = find_gap_start(timing, sample_count, &gap_len);
+	gap_end = gap_start + gap_len;
+	
 	for (i=0; i < sample_count; i++) {
-		if (timing[i] > 0xff)
-			printf("\t[%d] - Found > 0xff: %d\n", i, timing[i]);
+		//if (timing[i] > 0xff)
+		//printf("\t[%d] - Found > 0xff: %d\n", i, timing[i]);
 
 		if (timing[i] > 230 ) {
 			data[2] <<= 1;
@@ -845,10 +889,36 @@ int read_track_timing(int argc, char ** argv)
 			print_sector_info(htobe32(info));
 		}
 	}
+	printf("Found gap_len: %d ending @ %d\n", gap_len, gap_end);
+	c = 0;
+	for (i = gap_end; i<sample_count; i++) {
+		c += 675; 
+		c += timing[i] * 30;
+		if (c >= 200000000 )
+			break;
+	}
+	c = i;
 
-	fp = fopen(argv[1], "w");
-	fwrite(timing, sizeof(*timing), sample_count, fp);
-	fclose(fp);
+	if (i != sample_count - 1)  {
+		printf("From gap + 2000000us = %d\n", i);
+
+		/* This is not working!
+		 * Consider writing a routine to convert a string of
+		 * samples to something we can compare. */
+		for(; i < sample_count - 0x1; i++) {
+			if (!memcmp(&timing[i], &timing[gap_end], 0x9)) {
+				printf("Found match @ %d\n", i);
+				break;
+			}
+		}
+	}
+
+
+	if (filename) {
+		fp = fopen(filename, "w");
+		fwrite(timing, sizeof(*timing), sample_count, fp);
+		fclose(fp);
+	}
 
 	free(timing);
         return 0;
