@@ -336,16 +336,17 @@ int init_read_track(int argc, char ** argv)
         int track_len, rc = -1;
 	enum pru_head_side track_side = PRU_HEAD_UPPER;
 	char *filename = NULL;
-	int opt, special_sync = 0, sync_set = 0;
+	int opt, loops = 1, special_sync = 0, sync_set = 0;
         uint32_t sync_word = 0;
-        
+	unsigned char *mfm_track = NULL;
 	FILE *fp;
-	unsigned char *mfm_track = malloc(0x3200);//malloc(RAW_MFM_TRACK_SIZE);
-	if (!mfm_track)
-                return -1;
 
-	while((opt = getopt(argc, argv, "-lns:")) != -1) {
+	while((opt = getopt(argc, argv, "-c:lns:")) != -1) {
 		switch(opt) {
+		case 'c':
+			// loop count
+			loops = strtol(optarg, NULL, 0);
+			break;
 		case 'l':
 			track_side = PRU_HEAD_LOWER;
 			break;
@@ -374,21 +375,29 @@ int init_read_track(int argc, char ** argv)
                 fprintf(stderr, "%s: warning: both -s and -n specified!\n",
                                                                         argv[0]);
 
+	mfm_track = malloc(0x3200 * loops);//malloc(RAW_MFM_TRACK_SIZE);
+	if (!mfm_track)
+                return -1;
 
 	pru_start_motor(pru);
         if (track_side == PRU_HEAD_LOWER)
                 printf("Reading LOWER side\n");
         pru_set_head_side(pru, track_side);
         if (!special_sync) {
+		if (loops != 1) {
+			fprintf(stderr, "%s: warning -- "
+				"Ignoring loops argument with default sync\n",
+				argv[0]);
+		}
 	        pru_read_track(pru, mfm_track);
         } else if (special_sync == 1) {
                 // Read 0x3200 bytes from the disk, don't wait for any sync
-                pru_read_raw_track(pru, mfm_track, 0x3200,
+                pru_read_raw_track(pru, mfm_track, 0x3200 * loops,
                                                 PRU_SYNC_NONE, sync_word);
         } else {
                 printf("Trying to sync to: 0x%04x 0x%04x\n",
                         (sync_word & 0xffff0000) >> 16, sync_word & 0xffff);
-                pru_read_raw_track(pru, mfm_track, 0x3200,
+                pru_read_raw_track(pru, mfm_track, 0x3200 * loops,
                                                 PRU_SYNC_CUSTOM, sync_word);
         }
 
@@ -401,8 +410,8 @@ int init_read_track(int argc, char ** argv)
 	} else {
                 //hexdump(mfm_track, 64);
 		//hexdump(mfm_track + 0x3000, 0x200);
-		hexdump(mfm_track, 0x3200);
-		track_len = 0x3200;
+		hexdump(mfm_track, 0x3200 * loops);
+		track_len = 0x3200 * loops;
 	}
 		
 
@@ -414,7 +423,8 @@ int init_read_track(int argc, char ** argv)
 	}
 
 end:
-        free(mfm_track);
+	if (mfm_track)
+		free(mfm_track);
 	return rc;
 }
 
