@@ -311,7 +311,6 @@ int init_read(int argc, char ** argv)
         FILE *fp;
 	int i;
 	unsigned char *mfm_track, *mfm_disk;
-	char filename[255];
 	if (argc != 3) {
 		fprintf(stderr, "You must specify a filename\n");
 		return -1;
@@ -349,8 +348,7 @@ int init_read(int argc, char ** argv)
 	}
         pru_stop_motor(pru);
 
-	snprintf(filename, 255, "%s.mfm", argv[2]);
-	fp = fopen(filename, "w");
+	fp = fopen(argv[2], "w");
 	fwrite(mfm_disk, 1, RAW_MFM_TRACK_SIZE 
 				* TRACKS_PER_CYLINDER
 				* CYLINDERS_PER_DISK, fp);
@@ -443,6 +441,14 @@ int init_read_sector(int argc, char ** argv)
         printf("0b%c%c%c%c%c%c%c%c\n", BYTE_TO_BIN((sector[dword] & 0xff000000) >> 24));
 #endif
 
+
+int init_erase_track(int argc, char ** argv)
+{
+	pru_erase_track(pru);
+        return 0;
+}
+
+#if 0
 static void set_mfm_clock(void * data, size_t len)
 {
 	unsigned int *sector = data;
@@ -463,13 +469,6 @@ static void set_mfm_clock(void * data, size_t len)
         }
 }
 
-int init_erase_track(int argc, char ** argv)
-{
-	pru_erase_track(pru);
-        return 0;
-}
-
-#if 0
 int init_write_track(int argc, char ** argv)
 {
 	int i;
@@ -504,29 +503,18 @@ int init_write_track(int argc, char ** argv)
 
 int init_identify(int argc, char ** argv)
 {
-	int block_num = 880;
-	int target_cyl = block_num / 22;
-	//int target_sector = block_num % 11;
-	//int target_head = (block_num % 22) / 11;
-	unsigned int sector_info;
-	int cur_cyl;
+	unsigned char *mfm_track = malloc(RAW_MFM_TRACK_SIZE);
+	if (!mfm_track) return -1;
 
         pru_start_motor(pru);
-        pru_read_sector(pru);
-	sector_info = decode_mfm_sector(pru->shared_ram + 8, RAW_MFM_SECTOR_SIZE, NULL);
-	cur_cyl = ((sector_info & 0x00ff0000) >> 16) >> 1;
-        
-        if (cur_cyl != target_cyl) {
-                if (cur_cyl < target_cyl)
-                        pru_set_head_dir(pru, PRU_HEAD_INC);
-                else
-                        pru_set_head_dir(pru, PRU_HEAD_DEC);
-
-	        pru_step_head(pru, abs(target_cyl - cur_cyl));
-        }
-
-        printf("Head correct!\n");
+	pru_reset_drive(pru);
+        pru_set_head_dir(pru, PRU_HEAD_INC);
+	pru_step_head(pru, 40);
+	pru_read_track(pru, mfm_track);
         pru_stop_motor(pru);
+
+	decode_track(mfm_track, NULL, NULL);
+	free(mfm_track);
 
 	return 0;
 }
