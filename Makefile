@@ -6,7 +6,7 @@ PASM=/usr/bin/pasm
 
 BIN=bb-floppy
 BUILD_DIR=./build
-SRCS=main.c pru-setup.c
+SRCS=main.c pru-setup.c read_track_timing.c
 
 FIRMWARE=$(BUILD_DIR)/firmware.bin
 OBJ=$(BUILD_DIR)/firmware.o

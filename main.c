@@ -7,7 +7,9 @@
 #include <endian.h>
 
 #include "arm-interface.h"
+#include "mfm.h"
 #include "pru-setup.h"
+#include "read_track_timing.h"
 
 #define min(a,b) ((a < b) ? a : b)
 #define max(a,b) ((a > b) ? a : b)
@@ -186,8 +188,8 @@ void encode_mfm_sector(uint8_t sector_number, uint8_t sector_offset,
 	return;
 }
 
-static void usage(void);
-static struct pru * pru;
+void usage(void);
+struct pru * pru;
 
 /* Call this after pru_read_track, to sync up the data.
  * If we read an entire track,
@@ -698,182 +700,17 @@ int reset_drive(int argc, char ** argv)
         return 0;
 }
 
-/* read for 200000us (one complete track,
- * and store timing information to file
- * the timing is an array of unsigned 16-bit integers.
- * Multiply the numbers with 30, to get nano-seconds.
- * 
- * TODO: Implement full disk read that will read all timings,
- * and write to special container file.
- * The file structure must account for variable sample_count!
- * Then implement a function to write back the samples to a new disk.
- * */
-int read_timing(int argc, char ** argv)
+int test_track_0(int argc, char ** argv)
 {
-	FILE *fp;
-	uint8_t data[0xff];
-        uint16_t *timing;
-	int sample_count, i, e;
-
-	memset(data, 0x00, 0xff);
-
-	if (argc != 2) {
-		usage();
-		printf("You must give a filename to a timing file\n");
-		return -1;	
-	}
+        int rc = 0;
 
         pru_start_motor(pru);
-	pru_reset_drive(pru);
-	for (i=0; i < 80; i++) {
-		pru_set_head_side(pru, PRU_HEAD_UPPER);
-		printf("Read track %d - UPPER\n", i);
-		sample_count = pru_get_bit_timing(pru, &timing);
-		if (!sample_count) {
-			fprintf(stderr, "Got zero samples\n");
-			break;
-		}
-		printf("\tGot %d samples\n", sample_count);
-		for (e=0; e < sample_count; e++) {
-			if (timing[e] > 0xff) {
-				printf("\t[%d] - Found > 0xff: %d\n", e, timing[e]);
-				continue;
-			}
-			data[timing[e]]++;
-		}
-		free(timing);
-
-		pru_set_head_side(pru, PRU_HEAD_LOWER);
-		printf("Read track %d - LOWER\n", i);
-		sample_count = pru_get_bit_timing(pru, &timing);
-		if (!sample_count) {
-			fprintf(stderr, "Got zero samples\n");
-			break;
-		}
-		printf("\tGot %d samples\n", sample_count);
-		for (e=0; e < sample_count; e++) {
-			if (timing[e] > 0xff) {
-				printf("\t[%d] - Found > 0xff: %d\n", e, timing[e]);
-				continue;
-			}
-			data[timing[e]]++;
-		}
-		free(timing);
-	}
-
+        rc = pru_test_track_0(pru);
         pru_stop_motor(pru);
 
-	fp = fopen(argv[1], "w");
-	fwrite(data, sizeof(*data), 0xff, fp);
-	fclose(fp);
-
+        printf("Rc: %08x\n", rc);
         return 0;
 }
-
-static void shift(uint8_t *data, int len, uint8_t bit)
-{
-	int i;
-	for(i = 0; i < len-1; i++) {
-		data[i] <<= 1;
-		data[i] |= (data[i+1] & 0x80) >> 7;
-	}
-	data[len - 1] <<= 1;
-	if (bit) data[len - 1] |= 1;
-}
-
-static int check_sync(uint8_t *data, int len)
-{
-	uint8_t fmt,tt,ss,sg;
-	if (data[len - 12] == 0x44 && data[len - 11] == 0x89
-		&& data[len - 10] == 0x44 && data[len - 9] == 0x89) {
-		fmt = ((data[len - 8] & 0x55) << 1) | (data[len - 4] & 0x55);
-		tt = ((data[len - 7] & 0x55) << 1) | (data[len - 3] & 0x55);
-		ss = ((data[len - 6] & 0x55) << 1) | (data[len - 2] & 0x55);
-		sg = ((data[len - 5] & 0x55) << 1) | (data[len - 1] & 0x55);
-		printf(
-		"fmt: 0x%x, cylinder: %d, head: %d, sector: %d, gap_dist: %d\n",
-						fmt, tt >> 1, tt & 0x01, ss, sg);
-		return 1;
-	}
-	return 0;
-}
-
-static int find_std_sectors(const uint16_t *timing, int sample_count)
-{
-	uint8_t *data;
-	int i, count = 0;
-
-	data = malloc(1088);
-	if (!data) {
-		fprintf(stderr, "Couldn't allocate memory for buffer!\n");
-		return 0;
-	}
-	memset(data, 0x00, 1088);
-
-	for(i=0; i < sample_count; i++) {
-		if (timing[i] > 230) {
-			shift(data, 1088, 0);
-			if (check_sync(data, 1088)) count++;
-		}
-		if (timing[i] > 160) {
-			shift(data, 1088, 0);
-			if (check_sync(data, 1088)) count++;
-		}
-		shift(data, 1088, 0);
-		if (check_sync(data, 1088)) count++;
-
-		shift(data, 1088, 1);
-		if (check_sync(data, 1088)) count++;
-	}
-	return count;
-}
-
-int read_track_timing(int argc, char ** argv)
-{
-	int rc, opt, sample_count;
-	char *filename = NULL;
-	FILE *fp;
-        uint16_t *timing = NULL;
-	enum pru_head_side track_side = PRU_HEAD_UPPER;
-
-	while((opt = getopt(argc, argv, "-l")) != -1) {
-		switch(opt) {
-		case 'l':
-			track_side = PRU_HEAD_LOWER;
-			break;
-		case 1:
-			// If you specify a filename, we will save the data to that file.
-			filename = optarg;
-			printf("Filename detected: %s\n", filename);
-		}
-	}
-
-        pru_start_motor(pru);
-        pru_set_head_side(pru, track_side);
-	sample_count = pru_get_bit_timing(pru, &timing);
-        pru_stop_motor(pru);
-
-	printf("\tGot %d samples\n", sample_count);
-
-	rc = find_std_sectors(timing, sample_count);
-	if (!rc) {
-		fprintf(stderr,
-			"Couldn't find any standard sectors in data stream!\n"
-			);
-	} else {
-		printf("Found %d sectors!\n", rc);
-	}
-
-	if (filename) {
-		fp = fopen(filename, "w");
-		fwrite(timing, sizeof(*timing), sample_count, fp);
-		fclose(fp);
-	}
-
-	free(timing);
-        return 0;
-}
-
 
 typedef int (*fn_init_ptr)(int, char **);
 static const struct modes {
@@ -891,13 +728,14 @@ static const struct modes {
 	{ "test", "test the motor control, one second test", init_test },
 	{ "find_sync", "See if we find any sync marker", find_sync },
 	{ "reset", "Reset head to cylinder 0", reset_drive },
-	{ "step_head", "Move head [n] steps in [dir]", init_step_head },
+	{ "step_head", "Move head [I|O] for <n> steps", init_step_head },
 	{ "read_timing", "get timing info from entire disk", read_timing },
 	{ "read_track_timing", "Get a list of bit timings", read_track_timing },
+        { "test_track_0", "Return 1 if we are at track 0", test_track_0 },
 	{ NULL, NULL }
 };
 
-static void usage(void)
+void usage(void)
 {
 	const struct modes *m = modes;
 	printf(

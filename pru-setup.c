@@ -450,3 +450,18 @@ void pru_reset_drive(struct pru * pru)
 
 	return;
 }
+
+int pru_test_track_0(struct pru * pru)
+{
+	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
+        if (!pru->running) return -1;
+
+	intf->command = COMMAND_TEST_TRACK_0;
+        prussdrv_pru_wait_event(PRU_EVTOUT_0);
+        prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
+	if (intf->command != (COMMAND_TEST_TRACK_0 & 0x7f))
+                printf("Got wrong Ack: 0x%02x\n", intf->command);
+
+	return intf->argument;
+}
+

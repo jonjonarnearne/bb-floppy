@@ -55,7 +55,7 @@
 
 		"P9.28",        /* Output */
 		"P9.29",        /* Output */
-		"P9.30",        /* Output */
+		"P9.30",        /* Output - Step_Head_Dir */
 		"P9.31",        /* Output */
 		"P9.41",        /* Output */
 		"P9.42",        /* Output */
@@ -70,7 +70,7 @@
                     0x03c 0x26 /* P8_15 = pr1_pru0_pru_r31_15 ( MODE6 | INPUT )             */
                     0x038 0x26 /* P8_16 = pr1_pru0_pru_r31_14 ( MODE6 | INPUT )             */
                     0x184 0x2e /* P9_24 = pr1_pru0_pru_r31_16 ( MODE6 | INPUT | DISABLE )   */
-                    0x1ac 0x26 /* P9_25 = pr1_pru0_pru_r31_7  ( MODE6 | INPUT )             */
+                    0x1ac 0x2e /* P9_25 = pr1_pru0_pru_r31_7  ( MODE6 | INPUT | DISABLE )   */
                     0x1a4 0x2e /* P9_27 = pr1_pru0_pru_r31_5  ( MODE6 | INPUT | DISABLE )   */
 
                     0x034 0x16 /* P8_11 = pr1_pru0_pru_r30_15 ( MODE6 | OUTPUT | PULL UP )  */

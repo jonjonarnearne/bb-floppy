@@ -109,6 +109,7 @@ WAIT_FOR_COMMAND:
         qbeq WRITE_TRACK, interface.command, COMMAND_WRITE_TRACK
         qbeq READ_TRACK, interface.command, COMMAND_READ_TRACK
         qbeq GET_BIT_TIMING, interface.command, COMMAND_GET_BIT_TIMING
+        qbeq TEST_TRACK_0, interface.command, COMMAND_TEST_TRACK_0
 
         jmp  WAIT_FOR_COMMAND
 
@@ -123,14 +124,19 @@ QUIT:
         mov  r31.b0, PRU0_ARM_INTERRUPT+16
         halt
 
+        
 START_MOTOR:
         clr  PIN_DRIVE_ENABLE_MOTOR
 
         // 50 ms seems to work
         // 10ns * 5,000,000 = 50,000,000us = 50ms
         // 5,000,000 = 0x004c 4b40
-        ldi  r5.w0, #0x4b40
-        ldi  r5.w2, #0x004c
+        //ldi  r5.w0, #0x4b40
+        //ldi  r5.w2, #0x004c
+
+        //   600ms spin up! = 6.0e8 == 6.0e9/10
+        ldi  r5.w0, #0x8700
+        ldi  r5.w2, #0x0393
 spin_up_time:
         dec  r5
         qbne spin_up_time, r5, #0
@@ -142,9 +148,9 @@ STOP_MOTOR:
         jmp  SEND_ACK
 
 SET_HEAD_DIR:
-        clr  PIN_HEAD_DIR
-        qbeq SEND_ACK, interface.argument, #1
         set  PIN_HEAD_DIR
+        qbne SEND_ACK, interface.argument, #1
+        clr  PIN_HEAD_DIR
         jmp  SEND_ACK
 
 SET_HEAD_SIDE:
@@ -161,6 +167,15 @@ RESET_DRIVE:
         // If we are at track zero, do nothing
         qbbc SEND_ACK, PIN_TRACK_ZERO
         jal  STACK.ret_addr, fnReset_Head
+        jmp  SEND_ACK
+
+TEST_TRACK_0:
+        rclr r5
+        qbbs t0_false, PIN_TRACK_ZERO
+        ldi  r5, #1
+t0_false:
+        sbbo r5, GLOBAL.pruMem, OFFSET(interface.argument), \
+                                SIZE(interface.argument)
         jmp  SEND_ACK
 
 FIND_SYNC:
@@ -534,16 +549,21 @@ chksum_match:
 .enter reset_head_scope
 .assign Reset_Head, r20, r22, reset_head
 fnReset_Head:
+        rclr reset_head.step_count
         set  PIN_HEAD_DIR
 
 reset_head_move:
         clr  PIN_HEAD_STEP
+
         // 10ns * 80 = 800ns = 0.8us
         ldi  reset_head.timer.w0, #80
         ldi  reset_head.timer.w2, #0x0000
 reset_head_delay_low:
         dec  reset_head.timer
         qbne reset_head_delay_low, reset_head.timer, #0
+
+        set  PIN_HEAD_STEP
+        inc  reset_head.step_count
 
         // DELAY PER CYLINDER - Increment
         // 6ms = 6 000 000ns = 600 000 = 0x 00 09 27 c0
@@ -552,8 +572,11 @@ reset_head_delay_low:
 reset_head_cylinder_delay:
         dec  reset_head.timer
         qbne reset_head_cylinder_delay, reset_head.timer, #0
-        set  PIN_HEAD_STEP
 
+        // If we have stepped more than 85 times, something is wrong!
+        qblt reset_head_prologue, reset_head.step_count, #85
+
+        M_CHECK_ABORT
         qbbs reset_head_move, PIN_TRACK_ZERO
 
         // Wait for head to settle
@@ -579,7 +602,7 @@ reset_head_prologue:
 fnStep_Head:
         rcp  step_head.ret_addr, STACK.ret_addr
         rcp  step_head.step_count, interface.argument    
-        qblt end_step_head, step_head.step_count, #80 //Programming error
+        qblt end_step_head, step_head.step_count, #83 //Programming error
 do:
         M_CHECK_ABORT
         qbeq done, step_head.step_count, #0
