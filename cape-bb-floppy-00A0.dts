@@ -45,9 +45,10 @@
 		"P8.15",        /* Input */
 		"P8.16",        /* Input */
 		"P9.24",        /* Input - ReadData */
-		"P9.25",        /* Input */
+		"P9.25",        /* Input - Track 0 */
+		"P9.27",        /* Input - Ready */
 
-		"P9.27",        /* Output */
+                "P8.12",        /* Output - Debug */        
 		"P9.28",        /* Output */
 		"P9.29",        /* Output */
 		"P9.30",        /* Output */
@@ -66,8 +67,9 @@
                     0x038 0x26 /* P8_16 = pr1_pru0_pru_r31_14 ( MODE6 | INPUT )             */
                     0x184 0x2e /* P9_24 = pr1_pru0_pru_r31_16 ( MODE6 | INPUT | DISABLE )   */
                     0x1ac 0x26 /* P9_25 = pr1_pru0_pru_r31_7  ( MODE6 | INPUT )             */
+                    0x1a4 0x2e /* P9_27 = pr1_pru0_pru_r31_5  ( MODE6 | INPUT | DISABLE )   */
 
-                    0x1a4 0x15 /* P9_27 = pr1_pru0_pru_r30_5  ( MODE5 | OUTPUT | PULL UP )  */
+                    0x030 0x16 /* P8_12 = pr1_pru0_pru_r30_14 ( MODE6 | OUTPUT | PULL UP )  */
                     0x19c 0x15 /* P9_28 = pr1_pru0_pru_r30_3  ( MODE5 | OUTPUT | PULL UP )  */
                     0x194 0x15 /* P9_29 = pr1_pru0_pru_r30_1  ( MODE5 | OUTPUT | PULL UP )  */
                     0x198 0x15 /* P9_30 = pr1_pru0_pru_r30_2  ( MODE5 | OUTPUT | PULL UP )  */

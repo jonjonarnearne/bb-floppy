@@ -9,12 +9,17 @@
 #define PIN_HEAD_DIR            r30.t2 // P9.30
 #define PIN_HEAD_STEP           r30.t1 // P9.29
 #define PIN_HEAD_SELECT         r30.t3 // P9.28
-#define PIN_DEBUG               r30.t5 // P9.27
+
+#define PIN_DEBUG               r30.t14 // P8.12
 
 // Inputs
+#define PIN_READY               r31.t5  // P9.27
 #define PIN_TRACK_ZERO          r31.t7  // P9.25
 #define PIN_READ_DATA           r31.t16 // P9.24
+
 #define PIN_TEST                r31.t15 // P8.15
+#define PIN_UNUSED              r31.t14 // P8.16
+
 .macro INC
 .mparam reg
         add reg, reg, 1
@@ -85,7 +90,35 @@ START:
         // Set state to INITIAL
         xor RxData.state, RxData.state, RxData.state
 
+        // PIN_READY is low
+        //qbbc END, PIN_READY
+
         CLR PIN_DRIVE_ENABLE_MOTOR
+///*
+        CLR PIN_HEAD_DIR
+
+        ldi RxStatus.timer, #500
+del5000ns:
+        sub     RxStatus.timer, RxStatus.timer, #1      // 5ns
+        qbne    del5000ns, RxStatus.timer, #0            // 5ns
+
+        CLR PIN_HEAD_STEP
+        ldi r20.w0, #0x86a0
+        ldi r20.w2, #0x0001
+del5000ns1:
+        sub     r20, r20, #1      // 5ns
+        qbne    del5000ns1, r20, #0            // 5ns
+        SET PIN_HEAD_STEP
+
+
+        // Delay 150000ns = 150us
+        // 1 ms = 1000us = 1000000n
+        // 1 000 000 = 100 000
+        //ldi r20.w0, #0x86a0
+        //ldi r20.w2, #0x0001
+//*/
+
+        //QBBC END, PIN_TRACK_ZERO
 
         jal r17, fn_waitForHi
         // READ == HI
@@ -109,7 +142,9 @@ callFindSync:
         sbbo r18, RxData.pruMem, OFFSET(RxStatus.status), SIZE(RxStatus.status) 
         jmp main
 callReadTrack:
+        SET PIN_DEBUG
         jal r17, fn_readTrack
+        CLR PIN_DEBUG
         ldi RxData.state, STATE_FIND_SYNC
         jmp main
 callDone:
