@@ -61,7 +61,6 @@ unsigned int decode_data(void *in_buf, int len, void *out_buf)
 		output++;
 	}
 	return (chksum & MASK);
-
 }
 
 void bin_dump(unsigned char val)
@@ -84,7 +83,7 @@ struct mfm_sector {
         int even_d_chksum;
         unsigned char odd_data[512];
         unsigned char even_data[512];
-} __attribute__((packed));
+}__attribute__((packed));
 
 #define print_sector_info(info) do { \
 	printf("0x%08x: Format magic: 0x%02x, Cylinder Number: %u, Head: %s, sector_number: %2d - until end: %2d\n", \
@@ -146,13 +145,78 @@ unsigned int decode_mfm_sector(unsigned char *buf, int mfm_sector_len, uint8_t *
         return info;
 }
 
+#define MFM_MASK 0xaaaaaaaa
+uint32_t encode_data(void *in_buf, void *out_buf_odd, void *out_buf_even)
+{
+	uint32_t *input = in_buf;
+	uint32_t *output_odd = out_buf_odd;
+	uint32_t *output_even = out_buf_even;
+	uint32_t odd_bits, even_bits;
+	uint32_t chksum = 0L;
+	int i;
+
+	//memset(out_buf, 0xaa, 1024);
+	for (i = 0; i < 512/sizeof(int); i++) {
+		odd_bits = htobe32(*input & MFM_MASK);
+		even_bits = htobe32((*input >> 1) & MFM_MASK);
+
+		chksum ^= odd_bits;
+		chksum ^= even_bits;
+
+		*output_odd = odd_bits;
+		*output_even = even_bits;
+
+		input++;
+		output_odd++;
+		output_even++;
+	}
+	return (chksum & MFM_MASK);
+}
+void encode_mfm_sector(uint8_t sector_number, uint8_t sector_offset,
+			uint8_t track, enum pru_head_side side, void *data,
+							void *out_mfm_sector)
+{
+	int i;
+	struct mfm_sector *mfm_sector = out_mfm_sector;
+	static const uint32_t label[4] = {0};
+	uint32_t chksum=0, info=0;
+	info |= (0xff << 24); // Magic
+	info |= ((track << 1) << 16); // Cylinder/Track number
+	info |= (side << 16);	// Head 1 upper, 0 lower
+	info |= (sector_number << 8);
+	info |= (sector_offset);
+	print_sector_info(info);
+
+	mfm_sector->odd_info = info & MFM_MASK;
+	mfm_sector->even_info = (info >> 1) & MFM_MASK;
+	chksum ^= mfm_sector->odd_info;
+	chksum ^= mfm_sector->even_info;
+	chksum &= MFM_MASK;
+	
+	for (i=0; i<4; i++) {
+		mfm_sector->odd_label[i] = label[i] & MFM_MASK;
+		mfm_sector->even_label[i] = (label[i] >> 1) & MFM_MASK;
+		chksum ^= mfm_sector->odd_label[i];
+		chksum ^= mfm_sector->even_label[i];
+	}
+	chksum &= MFM_MASK;
+	mfm_sector->odd_h_chksum = chksum & MFM_MASK;
+	mfm_sector->even_h_chksum = (chksum >> 1) & MFM_MASK;
+
+	chksum = encode_data(data, mfm_sector->odd_data, mfm_sector->even_data);
+	mfm_sector->odd_d_chksum = chksum & MFM_MASK;
+	mfm_sector->even_d_chksum = (chksum >> 1) & MFM_MASK;
+
+	return;
+}
+
 static struct pru * pru;
 
 /* Call this after pru_read_track, to sync up the data.
  * If we read an entire track,
  * we might have to sync to the sync byte for successive sectors
  */
-static void decode_track(uint8_t *mfm_track, uint8_t *data_track)
+static void decode_track(uint8_t * volatile p_ram, uint8_t *mfm_track, uint8_t *data_track)
 {
 	unsigned int info, i, e, shifts, dwords_len;
         uint8_t * volatile ram;
@@ -162,7 +226,7 @@ static void decode_track(uint8_t *mfm_track, uint8_t *data_track)
         uint8_t *mfm_sectors = mfm_track;
 	uint8_t *data_sectors = data_track;
 
-        ram = pru->shared_ram;
+        ram = p_ram;
 
         for (e = 0; e<11; e++) {
                 info = decode_mfm_sector(ram, 1080, data);
@@ -263,12 +327,12 @@ int init_read(int argc, char ** argv)
 		printf("\nTrack: %d\n", i);
                 pru_set_head_side(pru, PRU_HEAD_UPPER);
 		pru_read_track(pru);	
-                decode_track(mfm_track, data_track);
+                decode_track(pru->shared_ram, mfm_track, data_track);
 		mfm_track += (1080 * 11);
 		data_track += (512 * 11);
                 pru_set_head_side(pru, PRU_HEAD_LOWER);
 		pru_read_track(pru);
-                decode_track(mfm_track, data_track);
+                decode_track(pru->shared_ram, mfm_track, data_track);
 		mfm_track += (1080 * 11);
 		data_track += (512 * 11);
 		if (i < 79) 
@@ -291,14 +355,61 @@ int init_read(int argc, char ** argv)
 
 int init_read_track(int argc, char ** argv)
 {
+        uint8_t *mfm_track = malloc(1080 * 11);
+        uint8_t *data_track = malloc(512 * 11);
 	pru_start_motor(pru);
 	pru_read_track(pru);
 	pru_stop_motor(pru);
 
-        decode_track(NULL,NULL);
+        decode_track(pru->shared_ram, mfm_track, data_track);
+        free(mfm_track);
+        free(data_track);
 
 	return 0;
 }
+
+int init_write_track(int argc, char ** argv)
+{
+	int i;
+	uint8_t data[512] = {0};
+	uint32_t *sector;
+	unsigned char *track = malloc(0x3200); //12800 bytes - 1 raw track
+	if (!track) return -1;
+
+	memset(track, 0xaa, 0x3200);
+	sector = (uint32_t *)track;
+
+	for(i=0; i<11; i++) {
+		sector = (uint32_t *)(track + (1088 * i));
+		sector[0] = 0xaaaaaaaa;
+		sector[1] = 0x44894489;
+		encode_mfm_sector(i, (11-i), 0, PRU_HEAD_UPPER, data, &sector[3]);
+	}
+
+	for (i=0; i<11; i++) {
+		hexdump(track + (i * 1088), 32);
+		decode_mfm_sector(track + 8 + (1088 * 1), 1080, data);
+	}
+	decode_track(track + 8, NULL, NULL);
+
+	memcpy(pru->shared_ram, track, 0x3000);
+	free(track);
+
+	//pru_start_motor(pru);
+	pru_erase_track(pru);
+        printf("Done!\n\n");
+	//pru_stop_motor(pru);
+
+	return 0;
+
+	pru_start_motor(pru);
+	pru_erase_track(pru);
+	pru_write_track(pru, track);
+	pru_stop_motor(pru);
+
+	return 0;
+}
+
 
 int init_identify(int argc, char ** argv)
 {
@@ -346,6 +457,7 @@ static const struct modes {
 	{ "identify", "print name of disk, and exit", init_identify },
 	{ "read", "read entire disk to file", init_read },
 	{ "read_track", "read and dump single track", init_read_track },
+	{ "write_track", "write a single track", init_write_track },
 	{ "test", "test the motor control, one second test", init_test },
 	{ "reset", "Reset head to cylinder 0", reset_drive },
 	{ NULL, NULL }

@@ -46,6 +46,7 @@
         sub reg, reg, #1
 .endm
 
+// This macro takse 15 + 5 = 20ns
 .macro  M_CHECK_ABORT
         lbbo interface.command, GLOBAL.pruMem, OFFSET(interface.command), \
                                                SIZE(interface.command)
@@ -91,6 +92,7 @@ WAIT_FOR_COMMAND:
         qbeq SET_HEAD_SIDE, interface.command, COMMAND_SET_HEAD_SIDE
         qbeq STEP_HEAD, interface.command, COMMAND_STEP_HEAD
         qbeq RESET_DRIVE, interface.command, COMMAND_RESET_DRIVE
+        qbeq ERASE_TRACK, interface.command, COMMAND_ERASE_TRACK
 
         jmp  WAIT_FOR_COMMAND
 
@@ -147,8 +149,6 @@ RESET_DRIVE:
         jal  STACK.ret_addr, fnStep_Head
         jmp  SEND_ACK
 
-        
-
 READ_SECTOR:
         //  We might try to read an entire track here.
         jal  STACK.ret_addr, fnWait_For_Hi
@@ -164,6 +164,10 @@ READ_SECTOR:
 
         jmp  SEND_ACK
 
+ERASE_TRACK:
+        jal  STACK.ret_addr, fnErase_Track
+        jmp  SEND_ACK
+
 SEND_ACK:
         and  interface.command, interface.command, 0x7f
         sbbo interface.command, GLOBAL.pruMem, \
@@ -172,8 +176,6 @@ SEND_ACK:
 
         mov  r31.b0, PRU0_ARM_INTERRUPT+16
         jmp  WAIT_FOR_COMMAND
-       
-        
         
 fnWait_For_Hi:
         M_CHECK_ABORT
@@ -484,4 +486,84 @@ end_step_head:
         rcp  STACK.ret_addr, step_head.ret_addr
         jmp  STACK.ret_addr
 .leave step_head_scope
+
+.struct Erase_Track
+        .u8   unused
+        .u8   bit_count
+        .u16  byte_count
+        .u16  timer
+        .u16  word
+.ends
+.enter erase_track_scope
+.assign Erase_Track, r20, r21, erase_track
+fnErase_Track:
+        clr  PIN_WRITE_GATE
+        clr  PIN_DRIVE_ENABLE_MOTOR
+
+        ldi  r5.w0, #0x4b40
+        ldi  r5.w2, #0x004c
+spin_up:
+        dec  r5
+        qbne spin_up, r5, #0
+
+        ldi  r6.w0, #0x3200
+        ldi  r6.w2, #0
+        // Must wait not wait more than 8us before writing data.
+
+get_byte:
+        ldi  erase_track.word, 0xaaaa
+        ldi  erase_track.bit_count, #16
+        dec  r6.w0
+        qbeq epilog, r6.w0, #0
+
+
+do_erase:
+        //qbbc erase_lo, erase_track.word, #15
+        nop0 r0, r0, r0
+erase_hi:
+        clr  PIN_WRITE_DATA
+        jmp  erase_dly_setup
+erase_lo:
+        set  PIN_WRITE_DATA
+        nop0 r0, r0, r0
+
+        // We should only pulse the WRITE_DATA_PIN on ones!
+        // Write pulse == 0.2 ~ 1.1 us
+erase_dly_setup:
+        ldi  erase_track.timer, #15
+erase_dly:
+        // This loop takes 30ns
+        M_CHECK_ABORT
+        dec  erase_track.timer
+        qbne erase_dly, erase_track.timer, #0
+
+        set  PIN_WRITE_DATA
+        ldi  erase_track.timer, #117
+lo_dly_adf:
+        M_CHECK_ABORT
+        dec  erase_track.timer
+        qbne lo_dly_adf, erase_track.timer, #0
+
+        lsl  erase_track.word, erase_track.word, #1
+        dec  erase_track.bit_count
+        qbeq get_byte, erase_track.bit_count, #0
+
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        jmp  do_erase
+
+epilog:
+
+        set  PIN_WRITE_GATE
+        // Must wait 650us before stopping motor aften PIN_WRITE_GATE == FALSE
+        ldi  r5.w0, #65000
+        ldi  r5.w2, #0
+spin_down:
+        dec  r5
+        qbne spin_down, r5, #0
+
+        set  PIN_DRIVE_ENABLE_MOTOR
+
+        jmp  STACK.ret_addr
+.leave erase_track_scope
 

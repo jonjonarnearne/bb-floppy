@@ -12,6 +12,7 @@
 #define COMMAND_SET_HEAD_SIDE   (0x05 | 0x80)
 #define COMMAND_STEP_HEAD       (0x06 | 0x80)
 #define COMMAND_RESET_DRIVE     (0x07 | 0x80)
+#define COMMAND_ERASE_TRACK     (0x08 | 0x80)
 
 #ifndef __GNUC__
 .struct ARM_IF
