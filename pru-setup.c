@@ -355,15 +355,15 @@ int pru_read_bit_timing(struct pru * pru, uint16_t ** data)
 	return (init_samp_count - intf->sync_word);
 }
 
-void pru_write_bit_timing(struct pru * pru, uint16_t *source,
+int pru_write_bit_timing(struct pru * pru, uint16_t *source,
                                                 int sample_count)
 {
         uint8_t mul = 0;
         uint16_t * volatile dest = (uint16_t * volatile)pru->shared_ram;
         int copy_size;
 
-	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
-        if (!pru->running) return;
+	volatile struct ARM_IF *intf = (volatile struct ARM_IF *)pru->ram;	
+        if (!pru->running) return sample_count;
 
         intf->read_count = sample_count;
         printf("Sample count: %d, bytes: %d\n", sample_count,
@@ -412,6 +412,8 @@ void pru_write_bit_timing(struct pru * pru, uint16_t *source,
                         break;
                 }
         }
+
+        return intf->read_count;
 }
 
 void pru_erase_track(struct pru * pru)

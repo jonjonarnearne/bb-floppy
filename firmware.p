@@ -923,7 +923,7 @@ read_bit_timing_done:
         .u16  mask
         .u32  sample_count      // Number of samples to read
         .u32  total_time
-        .u32  target_time
+        .u32  flags
 .ends
 .enter write_bit_timing_scope
 .assign Write_Bit_Timing, r20, r24, write_bit_timing
@@ -932,10 +932,11 @@ fnWrite_Bit_Timing:
 
         rcp  write_bit_timing.sample_count, interface.read_count
         rclr write_bit_timing.ram_offset
+        rclr write_bit_timing.flags
 
-write_bit_timing_wait_index_high:
+write_bit_timing_wait_for_index_high:
         M_CHECK_ABORT
-        qbbc write_bit_timing_wait_index_high, PIN_INDEX
+        qbbc write_bit_timing_wait_for_index_high, PIN_INDEX
 
 write_bit_timing_wait_index_falling:
         M_CHECK_ABORT
@@ -958,7 +959,16 @@ write_bit_timing_loop:
         lbbo write_bit_timing.timer, GLOBAL.sharedMem, \
                                         write_bit_timing.ram_offset, \
                                         SIZE(write_bit_timing.timer)
-        add  write_bit_timing.timer, write_bit_timing.timer, #0
+        sub  write_bit_timing.timer, write_bit_timing.timer, #3
+
+        qbbc write_bit_timing_index_low, PIN_INDEX
+
+        set  write_bit_timing.flags, BREAK_ON_IDX_LOW
+        jmp  write_bit_timing_timer_high
+
+write_bit_timing_index_low:
+        qbbs write_bit_timing_break_loop, write_bit_timing.flags, BREAK_ON_IDX_LOW
+
 write_bit_timing_timer_high:
         // Each iteration takes 30ns
         M_CHECK_ABORT
@@ -967,9 +977,11 @@ write_bit_timing_timer_high:
 
         clr  PIN_WRITE_DATA
 
-        ldi  write_bit_timing.timer, #15
+        // We hold the write data low for 660ns 
+        ldi  write_bit_timing.timer, #66 //#15
 write_bit_timing_timer_low:
-        M_CHECK_ABORT
+        // Each iteration takes 30ns | 10ns
+        // M_CHECK_ABORT
         dec  write_bit_timing.timer
         qbne write_bit_timing_timer_low, write_bit_timing.timer, #0
 
@@ -1010,6 +1022,11 @@ write_bit_timing_skip_interrupt:
 
 write_bit_timing_break_loop:
         set  PIN_WRITE_GATE
+
+        //ldi  write_bit_timing.sample_count, #5
+        rcp  interface.read_count, write_bit_timing.sample_count
+        sbbo interface.read_count, GLOBAL.pruMem, OFFSET(interface.read_count), \
+                                               SIZE(interface.read_count)
 
         rcp  STACK.ret_addr, write_bit_timing.ret_addr
         jmp  STACK.ret_addr

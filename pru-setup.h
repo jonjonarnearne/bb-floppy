@@ -65,7 +65,7 @@ void pru_set_head_side(struct pru * pru, enum pru_head_side side);
 void pru_step_head(struct pru * pru, unsigned short count);
 void pru_reset_drive(struct pru * pru);
 int pru_read_bit_timing(struct pru * pru, uint16_t ** data);
-void pru_write_bit_timing(struct pru * pru, uint16_t *source,
+int pru_write_bit_timing(struct pru * pru, uint16_t *source,
                                                 int sample_count);
 int pru_test_track_0(struct pru * pru);
 #endif
