@@ -107,6 +107,7 @@ WAIT_FOR_COMMAND:
         qbeq WRITE_TRACK, interface.command, COMMAND_ERASE_TRACK
         qbeq WRITE_TRACK, interface.command, COMMAND_WRITE_TRACK
         qbeq READ_TRACK, interface.command, COMMAND_READ_TRACK
+        qbeq GET_BIT_TIMING, interface.command, COMMAND_GET_BIT_TIMING
 
         jmp  WAIT_FOR_COMMAND
 
@@ -157,10 +158,7 @@ STEP_HEAD:
 RESET_DRIVE:
         // If we are at track zero, do nothing
         qbbc SEND_ACK, PIN_TRACK_ZERO
-
-        set  PIN_HEAD_DIR
-        ldi  interface.argument, #0
-        jal  STACK.ret_addr, fnStep_Head
+        jal  STACK.ret_addr, fnReset_Head
         jmp  SEND_ACK
 
 FIND_SYNC:
@@ -201,6 +199,13 @@ READ_SECTOR:
 
 WRITE_TRACK:
         jal  STACK.ret_addr, fnWrite_Track
+        jmp  SEND_ACK
+
+GET_BIT_TIMING:
+        //  We might try to read an entire track here.
+        jal  STACK.ret_addr, fnWait_For_Hi
+        jal  STACK.ret_addr, fnWait_For_Lo
+        jal  STACK.ret_addr, fnGet_Bit_Timing
         jmp  SEND_ACK
 
 SEND_ACK:
@@ -252,8 +257,8 @@ timer:
         inc  find_sync.timer
         qbbs timer, PIN_READ_DATA 
 
-        qbgt short, find_sync.timer, #140       // timer < 140
-        qbgt med, find_sync.timer, #190       // timer < 190
+        qbgt short, find_sync.timer, #140                  //#140 * 30 = 4200 ns 4.2us       // timer < 140
+        qbgt med, find_sync.timer, #207                    //#207 * 30 = 6210 ns             // timer < 207
 long:
         ldi  find_sync.bit_remain, #3
         lsl  find_sync.cur_dword, find_sync.cur_dword, #1
@@ -349,7 +354,6 @@ skip_copy_sync_words:
 
 rs_time_to_lo:
         jal  STACK.ret_addr, fnWait_For_Hi
-rs_time_to_lo_fast:
         rclr read_sector.timer
 rs_timer:
         M_CHECK_ABORT                                           //20 ns
@@ -357,7 +361,7 @@ rs_timer:
         qbbs rs_timer, PIN_READ_DATA 
 
         qbgt rs_short, read_sector.timer, #140                  //#140 * 30 = 4200 ns 4.2us       // timer < 140
-        qbgt rs_med, read_sector.timer, #207                    //#190 * 30 = 5700 ns 5.7ns || 207 * 30 = 6210 ns      // timer < 190
+        qbgt rs_med, read_sector.timer, #207                    //#207 * 30 = 6210 ns             // timer < 207
 
 rs_long:
         ldi  read_sector.bit_remain, #3
@@ -519,6 +523,49 @@ chksum_match:
 .leave get_sector_offset_scope
 .leave read_sector_scope
 
+.struct Reset_Head
+        .u16  step_count
+        .u16  test
+        .u32  ret_addr
+        .u32  timer
+.ends
+.enter reset_head_scope
+.assign Reset_Head, r20, r22, reset_head
+fnReset_Head:
+        set  PIN_HEAD_DIR
+
+reset_head_move:
+        clr  PIN_HEAD_STEP
+        // 10ns * 80 = 800ns = 0.8us
+        ldi  reset_head.timer.w0, #80
+        ldi  reset_head.timer.w2, #0x0000
+reset_head_delay_low:
+        dec  reset_head.timer
+        qbne reset_head_delay_low, reset_head.timer, #0
+
+        // DELAY PER CYLINDER - Increment
+        // 6ms = 6 000 000ns = 600 000 = 0x 00 09 27 c0
+        ldi  reset_head.timer.w0, #0x27c0
+        ldi  reset_head.timer.w2, #0x0009
+reset_head_cylinder_delay:
+        dec  reset_head.timer
+        qbne reset_head_cylinder_delay, reset_head.timer, #0
+        set  PIN_HEAD_STEP
+
+        qbbs reset_head_move, PIN_TRACK_ZERO
+
+        // Wait for head to settle
+        // 30ms = 30 000 000ns = 3 000 000 = 0x 00 2d c6 c0
+        ldi  reset_head.timer.w0, #0xc6c0
+        ldi  reset_head.timer.w2, #0x002d
+reset_head_settle:
+        dec  reset_head.timer
+        qbne reset_head_settle, reset_head.timer, #0
+
+reset_head_prologue:
+        jmp  STACK.ret_addr
+.leave reset_head_scope
+
 .struct Step_Head
         .u16  step_count
         .u16  unused
@@ -533,6 +580,7 @@ fnStep_Head:
         qblt end_step_head, step_head.step_count, #80 //Programming error
 do:
         M_CHECK_ABORT
+        qbeq done, step_head.step_count, #0
 
         clr  PIN_HEAD_STEP
 
@@ -545,23 +593,15 @@ delay_lo:
 
         set  PIN_HEAD_STEP
         
-        ldi  step_head.timer.w0, #0x1a80
-        ldi  step_head.timer.w2, #0x0006
-        qbne normal_step, step_head.step_count, #0
-        qbbc done, PIN_HEAD_DIR // This is a programming error, we forgot to step out
-        // We are resetting the drive!
-        qbbs cylinder_delay, PIN_TRACK_ZERO
-        jmp done
-
-normal_step:
-        dec  step_head.step_count
-        qbeq done, step_head.step_count, #0
-
         // DELAY PER CYLINDER - Increment
-        // 4ms = 4 000 000ns = 400 000 = 0x 00 06 1a 80
+        // 6ms = 6 000 000ns = 600 000 = 0x 00 09 27 c0
+        ldi  step_head.timer.w0, #0x27c0
+        ldi  step_head.timer.w2, #0x0009
 cylinder_delay:
         dec  step_head.timer
         qbne cylinder_delay, step_head.timer, #0
+
+        dec  step_head.step_count
         jmp do
 
 done:
@@ -721,4 +761,58 @@ fnGet_Erase:
         nop0 r0, r0, r0                                                         //  5ns
         jmp  write_track.ret_addr                                               //  5ns
 .leave write_track_scope
+
+.struct Get_Bit_Timing
+        .u16  timer
+        .u16  ram_offset        // Position of write pointer
+        .u32  ret_addr
+        .u32  dword_count       // Dwords, currently read
+        .u32  dword_target      // Dwords to read
+.ends
+.enter get_bit_timing_scope
+.assign Get_Bit_Timing, r21, r24, get_bit_timing
+fnGet_Bit_Timing:
+        rcp  get_bit_timing.ret_addr, STACK.ret_addr
+
+        rclr get_bit_timing.ram_offset
+        rclr get_bit_timing.dword_count
+        ldi  get_bit_timing.dword_target.w0, #0xc3b4 // 100200 / 2
+        ldi  get_bit_timing.dword_target.w2, #0x0000
+
+get_bit_timing_get_next_bit:
+        jal  STACK.ret_addr, fnWait_For_Hi
+
+        rclr get_bit_timing.timer
+get_bit_timing_timer:
+        M_CHECK_ABORT                                           //20 ns
+        inc  get_bit_timing.timer
+        qbbs get_bit_timing_timer, PIN_READ_DATA 
+
+get_bit_timing_store:
+        sbbo get_bit_timing.timer, GLOBAL.sharedMem, get_bit_timing.ram_offset, \
+                                                SIZE(get_bit_timing.timer)
+        inc  get_bit_timing.dword_count
+        add  get_bit_timing.ram_offset, get_bit_timing.ram_offset, \
+                                                SIZE(get_bit_timing.timer)
+
+        // Enable writing of more than 0x3000 bytes.
+        // We write 0x1000, and give allert to the ARM side,
+        // we continue to write 0x1000 more, while ARM reads the last 0x1000.
+        // Then jump back to 0x00, for the next 0x1000
+        ldi  get_bit_timing.timer, 0x0fff;
+        and  get_bit_timing.timer, get_bit_timing.timer, get_bit_timing.ram_offset
+        qbne skip_interrupt, get_bit_timing.timer, #0
+        // We have read 0x1000 - Notify ARM
+        ldi  r31.b0, PRU0_ARM_INTERRUPT+16
+        // We limit the ram_offset to 0x1fff here
+        ldi  get_bit_timing.timer, 0x1000;
+        and  get_bit_timing.ram_offset, get_bit_timing.ram_offset, get_bit_timing.timer
+        
+        qbeq get_bit_timing_done, get_bit_timing.dword_count, get_bit_timing.dword_target
+        jmp  get_bit_timing_get_next_bit
+
+get_bit_timing_done:
+        rcp  STACK.ret_addr, get_bit_timing.ret_addr
+        jmp  STACK.ret_addr
+.leave get_bit_timing_scope
 

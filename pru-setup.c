@@ -282,6 +282,7 @@ void pru_read_raw_track(struct pru * pru, void * data, uint32_t len,
                         break;
                 }
         }
+        // Read the rest of the data out of the buffer if any!
         for(i=0; i < len/sizeof(*dest); i++) {
                 dest[i] = htobe32(source[i]);
         }
@@ -292,6 +293,55 @@ void pru_read_raw_track(struct pru * pru, void * data, uint32_t len,
         //}
 
 	return;
+}
+
+void pru_get_bit_timing(struct pru * pru, void * data)
+{
+        int len = 100200/sizeof(uint16_t); // number of items
+        uint8_t mul = 0;
+        uint16_t *dest = data;
+        uint16_t * volatile source = (uint16_t * volatile)pru->shared_ram;
+
+	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
+        if (!pru->running) return;
+        memset(pru->shared_ram, 0x00, 0x3000);
+
+	intf->command = COMMAND_GET_BIT_TIMING;
+
+        while(1) {
+                prussdrv_pru_wait_event(PRU_EVTOUT_0);
+                prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
+
+                // We read 0x1000 bytes at a time, from the 0x3000byte buffer
+                // jumping back and forth in sync with the PRU
+	        if (intf->command == COMMAND_GET_BIT_TIMING) {
+                        /*
+                        for(i=0; i < 0x1000/sizeof(*dest); i++) {
+                                dest[i] = htobe32(source[i]);
+                        }
+                        */
+                        memcpy(dest, source, 0x1000);
+                        dest += 0x1000/sizeof(*dest);
+                        len -= 0x1000/sizeof(*dest);
+                        if (++mul & 0x1)
+                                source += 0x1000/sizeof(*dest);
+                        else
+                                source -= 0x1000/sizeof(*dest);
+
+                        printf("Read 0x1000\n");
+                } else if (intf->command == (COMMAND_GET_BIT_TIMING & 0x7f)) {
+                        break;
+                } else {
+                        printf("Got wrong Ack: 0x%02x\n", intf->command);
+                        break;
+                }
+        }
+        if (len > 0x1000) {
+                fprintf(stderr, "fatal: len is: %d after read loop!\n", len);
+                return;
+        }
+        if (len > 0) 
+                memcpy(dest, source, len * sizeof(*dest));
 }
 
 void pru_erase_track(struct pru * pru)

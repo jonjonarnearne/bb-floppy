@@ -643,6 +643,20 @@ int reset_drive(int argc, char ** argv)
         return 0;
 }
 
+int read_timing(int argc, char ** argv)
+{
+        uint16_t *timing = malloc(sizeof(uint16_t) * 100200/2);
+        if (!timing)
+                return -1;
+
+        pru_start_motor(pru);
+	pru_get_bit_timing(pru, timing);
+        pru_stop_motor(pru);
+
+        free(timing);
+        return 0;
+}
+
 int write_raw_mfm(int argc, char ** argv)
 {
 	FILE *fp;
@@ -696,6 +710,7 @@ static const struct modes {
 	{ "reset", "Reset head to cylinder 0", reset_drive },
 	{ "write_raw", "Write raw mfm file to drive", write_raw_mfm },
 	{ "step_head", "Move head [n] steps in [dir]", init_step_head },
+	{ "read_timing", "Get a list of bit timings", read_timing },
 	{ NULL, NULL }
 };
 

@@ -16,6 +16,7 @@
 #define COMMAND_WRITE_TRACK     (0x09 | 0x80)
 #define COMMAND_READ_TRACK      (0x0a | 0x80)
 #define COMMAND_FIND_SYNC       (0x0b | 0x80)
+#define COMMAND_GET_BIT_TIMING  (0x0c | 0x80)
 
 #ifndef __GNUC__
 .struct ARM_IF
