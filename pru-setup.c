@@ -146,6 +146,22 @@ void pru_stop_motor(struct pru * pru)
 	return;
 }
 
+void pru_find_sync(struct pru * pru)
+{
+	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
+        if (!pru->running) return;
+
+        // IMPORTANT: SET ARGUMENT BEFORE WE SET THE COMMAND!
+        // The argument is number of dwords
+	intf->command = COMMAND_FIND_SYNC;
+        prussdrv_pru_wait_event(PRU_EVTOUT_0);
+        prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
+	if (intf->command != (COMMAND_FIND_SYNC & 0x7f))
+                printf("Got wrong Ack: 0x%02x\n", intf->command);
+
+	return;
+}
+
 void pru_read_sector(struct pru * pru)
 {
 	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	

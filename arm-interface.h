@@ -14,6 +14,7 @@
 #define COMMAND_RESET_DRIVE     (0x07 | 0x80)
 #define COMMAND_ERASE_TRACK     (0x08 | 0x80)
 #define COMMAND_WRITE_TRACK     (0x09 | 0x80)
+#define COMMAND_FIND_SYNC       (0x0a | 0x80)
 
 #ifndef __GNUC__
 .struct ARM_IF

@@ -87,6 +87,7 @@ WAIT_FOR_COMMAND:
         qbeq QUIT, interface.command, COMMAND_QUIT
         qbeq START_MOTOR, interface.command, COMMAND_START_MOTOR
         qbeq STOP_MOTOR, interface.command, COMMAND_STOP_MOTOR
+        qbeq FIND_SYNC, interface.command, COMMAND_FIND_SYNC
         qbeq READ_SECTOR, interface.command, COMMAND_READ_SECTOR
         qbeq SET_HEAD_DIR, interface.command, COMMAND_SET_HEAD_DIR
         qbeq SET_HEAD_SIDE, interface.command, COMMAND_SET_HEAD_SIDE
@@ -148,6 +149,12 @@ RESET_DRIVE:
         set  PIN_HEAD_DIR
         ldi  interface.argument, #0
         jal  STACK.ret_addr, fnStep_Head
+        jmp  SEND_ACK
+
+FIND_SYNC:
+        jal  STACK.ret_addr, fnWait_For_Hi
+        jal  STACK.ret_addr, fnWait_For_Lo
+        jal  STACK.ret_addr, fnFind_Sync
         jmp  SEND_ACK
 
 READ_SECTOR:
@@ -511,19 +518,19 @@ er_spin_up:
         dec  r5
         qbne er_spin_up, r5, #0
 
-        ldi  r6.w0, #0x3200
+        ldi  r6.w0, #0x6400//#0x3200
         ldi  r6.w2, #0
         // Must wait not wait more than 8us before writing data.
 
 er_get_byte:
-        ldi  erase_track.word, 0xaaaa
+        ldi  erase_track.word, #0xaaaa //0x8944 //0xaaaa
         ldi  erase_track.bit_count, #16
         dec  r6.w0
         qbeq er_epilog, r6.w0, #0
 
 
 do_erase:
-        //qbbc erase_lo, erase_track.word, #15
+        qbbc erase_lo, erase_track.word, #15
         nop0 r0, r0, r0
 erase_hi:
         clr  PIN_WRITE_DATA
@@ -543,7 +550,8 @@ erase_dly:
         qbne erase_dly, erase_track.timer, #0
 
         set  PIN_WRITE_DATA
-        ldi  erase_track.timer, #117 // 3500 + 500 low = 4000 ns = 4us
+
+        ldi  erase_track.timer, #50 //#117 //#50 // 1500ns // 3500 + 500 low = 4000 ns = 4us
 lo_dly_adf:
         M_CHECK_ABORT
         dec  erase_track.timer
@@ -588,6 +596,17 @@ fnWrite_Track:
         //   Must wait not wait more than 8us before writing data.
         clr  PIN_DRIVE_ENABLE_MOTOR
 
+        //   50 msec spin up time?
+        //   Could be tweaked!
+        //ldi  write_track.delay_timer.w0, #0x4b40
+        //ldi  write_track.delay_timer.w2, #0x004c
+        //   500ms spin up!
+        ldi  write_track.delay_timer.w0, #0xf080
+        ldi  write_track.delay_timer.w2, #0x02fa
+write_track_spin_up:
+        dec  write_track.delay_timer
+        qbne write_track_spin_up, write_track.delay_timer, #0
+
         //   One mfm track = NULL       0xaaaaaaaa = 4  bytes
         //                 + Sync dword 0x44894489 = 4  bytes
         //                 + Track Head 14 dword   = 56   bytes
@@ -596,27 +615,23 @@ fnWrite_Track:
         //                 =            Sum Total  = 12056 bytes = 0x2f18
         rclr write_track.dword_index
         //ldi  write_track.dword_count, #0x0bc6 // 0x2f18/4 = 3014 dwords
-        ldi  write_track.dword_count, #2 // 0x2f18/4 = 3014 dwords
-
-        //   50 msec spin up time?
-        //   Could be tweaked!
-        ldi  write_track.delay_timer.w0, #0x4b40
-        ldi  write_track.delay_timer.w2, #0x004c
-write_track_spin_up:
-        dec  write_track.delay_timer
-        qbne write_track_spin_up, write_track.delay_timer, #0
+        ldi  write_track.dword_count, #0x3000 //#8 // 0x2f18/4 = 3014 dwords
 
 write_track_get_byte:
-        //lbbo write_track.dword, GLOBAL.sharedMem, write_track.dword_index, 4
-        ldi  write_track.dword.w0, #0xaaaa
-        ldi  write_track.dword.w2, #0xaaaa
-        ldi  write_track.bit_count, #32
+        lbbo write_track.dword, GLOBAL.sharedMem, write_track.dword_index, 4    // 15ns
+        ldi  write_track.bit_count, #32                                        //  5ns
+        add  write_track.dword_index, write_track.dword_index, 4                //  5ns
+        qbeq write_track_epilogue, write_track.dword_index, \
+                                        write_track.dword_count                 //  5ns
+        //ldi  write_track.dword.w0, #0xaaaa
+        //ldi  write_track.dword.w2, #0xaaaa
 
 write_track_write:
         // MFM data is 01|001|0001
         // 0xaaaa = 0b1010 1010 1010 1010
-        // MFM SYNC = 0b0100 0100 1000 1001
-        // if this bit is zero, something is wrong
+        // 0x8944
+        //    4    8  6  4    8     6    8  6  4    8   6/8
+        // 0b 1000 1001 0100 0100 | 1000 1001 0100 0100 ?
         qbbc write_track_bit_0, write_track.dword, #31
 write_track_bit_1:
         clr  PIN_WRITE_DATA
@@ -637,31 +652,25 @@ write_track_pulse_delay:
 
         set  PIN_WRITE_DATA
 
-        // Now delay 1500ns (-40ns) for a total of 2000ns | 2us
+        // Now delay 1500ns (-30ns) for a total of 2000ns | 2us
         rclr write_track.delay_timer
-        ldi  write_track.delay_timer.w0, #49
+        ldi  write_track.delay_timer.w0, #50
 write_track_0_delay:
         M_CHECK_ABORT                                           // 20ns
         dec  write_track.delay_timer                            //  5ns
         qbne write_track_0_delay, write_track.delay_timer, #0   //  5ns
 
-        // The next 8 instructions = 40ns
+        // The next 6 instructions = 30ns
         lsl  write_track.dword, write_track.dword, #1
         dec  write_track.bit_count
-        qbeq write_track_get_next_byte, write_track.bit_count, #0
+        qbeq write_track_get_byte, write_track.bit_count, #0
+        // Spend as much time here as in write_track_get_byte
         nop0 r0, r0, r0
         nop0 r0, r0, r0
         nop0 r0, r0, r0
         nop0 r0, r0, r0
         nop0 r0, r0, r0
-        jmp  write_track_write
-
-write_track_get_next_byte:
-        dec  write_track.dword_count
-        qbeq write_track_epilogue, write_track.dword_count, #0
-        ldi  write_track.dword.w0, SYNC_WORD
-        ldi  write_track.dword.w2, SYNC_WORD
-        ldi  write_track.bit_count, #32
+        nop0 r0, r0, r0
         jmp  write_track_write
 
 write_track_epilogue:

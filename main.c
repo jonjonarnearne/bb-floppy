@@ -107,6 +107,7 @@ unsigned int decode_mfm_sector(unsigned char *buf, int mfm_sector_len, uint8_t *
         info = (sector->odd_info & 0x55555555);
         info <<= 1;
         info |= (sector->even_info & 0x55555555);
+	print_sector_info(info);
 
 
         head_chksum = ((sector->odd_h_chksum & MASK) << 1)
@@ -363,9 +364,24 @@ int init_read_track(int argc, char ** argv)
 	pru_read_track(pru);
 	pru_stop_motor(pru);
 
+        hexdump(pru->shared_ram, 8);
         decode_track(pru->shared_ram, mfm_track, data_track);
         free(mfm_track);
         free(data_track);
+
+	return 0;
+}
+
+int init_read_sector(int argc, char ** argv)
+{
+        int sector_info;
+	pru_start_motor(pru);
+	pru_read_sector(pru);
+	pru_stop_motor(pru);
+
+        hexdump(pru->shared_ram, 16);
+	sector_info = decode_mfm_sector(pru->shared_ram, MFM_TRACK_LEN, NULL);
+	print_sector_info(sector_info);
 
 	return 0;
 }
@@ -386,16 +402,17 @@ int init_read_track(int argc, char ** argv)
         printf("0b%c%c%c%c%c%c%c%c\n", BYTE_TO_BIN((sector[dword] & 0xff000000) >> 24));
 #endif
 
-static void set_mfm_clock(uint32_t * sector, size_t len)
+static void set_mfm_clock(void * data, size_t len)
 {
+	unsigned char *sector = data;
         int dword, bit;
         uint8_t this_bit, last_bit;
 
-        this_bit = sector[1] & 1;
+        this_bit = sector[7] & 1;
 
         // The first two dwords are the sector markers
-        for(dword = 2; dword < len; dword++) {
-                for(bit = 31; bit >= 1; bit -= 2) {
+        for(dword = 8; dword < len; dword++) {
+                for(bit = 7; bit >= 1; bit -= 2) {
                         last_bit = this_bit;
                         this_bit = sector[dword] & (1 << (bit - 1));
                         if (!(last_bit | this_bit))
@@ -423,28 +440,28 @@ int init_write_track(int argc, char ** argv)
 	memset(track, 0xaa, 0x3200);
 	sector = (uint32_t *)track;
 
-	for(i=0; i<2; i++) {
+	for(i=0; i<11; i++) {
 		sector = (uint32_t *)(track + (RAW_MFM_SECTOR_SIZE * i));
 		sector[0] = 0xaaaaaaaa;
-		sector[1] = 0x44894489;
+		sector[1] = 0x44894489; // Correct endian
+		//sector[1] = 0x89448944;
 		encode_mfm_sector(i, (11-i), 0, PRU_HEAD_UPPER, data, &sector[2]);
-		hexdump(sector + 2, 32);
-                set_mfm_clock(sector, RAW_MFM_SECTOR_SIZE / 4);
-		hexdump(sector + 2, 32);
-                printf("\n");
+                set_mfm_clock(sector, RAW_MFM_SECTOR_SIZE);
 	}
 
-	for (i=0; i<2; i++) {
-		//hexdump(track + (i * RAW_MFM_SECTOR_SIZE), 32);
-		//decode_mfm_sector(track + 8 + (RAW_MFM_SECTOR_SIZE * 1), 1080, data);
+	for (i=0; i<11; i++) {
+		hexdump(track + (i * RAW_MFM_SECTOR_SIZE), 16);
+		//decode_mfm_sector(track + 8 + (RAW_MFM_SECTOR_SIZE * i), 1080, data);
 	}
 	//decode_track(track + 8, NULL, NULL);
 
+	//hexdump(track + 8, 8);
+        //memset(track, 0xaa, 0x3000);
 	memcpy(pru->shared_ram, track, 0x3000);
 	free(track);
 
 	//pru_erase_track(pru);
-	//pru_write_track(pru, track);
+	pru_write_track(pru, track);
         printf("Done!\n\n");
 
 	return 0;
@@ -487,6 +504,14 @@ int init_identify(int argc, char ** argv)
 	return 0;
 }
 
+int find_sync(int argc, char ** argv)\
+{
+        pru_start_motor(pru);
+	pru_find_sync(pru);
+        pru_stop_motor(pru);
+        return 0;
+}
+
 int reset_drive(int argc, char ** argv)\
 {
         pru_start_motor(pru);
@@ -504,8 +529,10 @@ static const struct modes {
 	{ "identify", "print name of disk, and exit", init_identify },
 	{ "read", "read entire disk to file", init_read },
 	{ "read_track", "read and dump single track", init_read_track },
+	{ "read_sector", "try to read a single sector", init_read_sector },
 	{ "write_track", "write a single track", init_write_track },
 	{ "test", "test the motor control, one second test", init_test },
+	{ "find_sync", "See if we find any sync marker", find_sync },
 	{ "reset", "Reset head to cylinder 0", reset_drive },
 	{ NULL, NULL }
 };
