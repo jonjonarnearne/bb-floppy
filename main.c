@@ -39,21 +39,29 @@ void hexdump(const void *b, size_t len)
 #define max(a,b) ((a > b) ? a : b)
 
 #define MASK 0x55555555 /* 0b010101010101 ... 010101 */
-#if 0
-void decode_data(unsigned char *buf, int len)
+unsigned int decode_data(void *in_buf, int len, void *out_buf)
 {
-	unsigned int *output;
-	unsigned int *input = buf;
+	unsigned int *input = in_buf;
+	unsigned int *output = out_buf;
 	unsigned int odd_bits, even_bits;
-	unsigned int chksum;
-	int data_size;
+	unsigned int chksum = 0L;
+	int data_size = len/2;
 	int i;
 
-	for (i = 0; i < len/4; i++) {
+	memset(out_buf, 0, data_size);
+	for (i = 0; i < data_size/sizeof(int); i++) {
 		odd_bits = *input;
+		even_bits = *(input+(data_size/sizeof(int)));
+		chksum ^= odd_bits;
+		chksum ^= even_bits;
+
+		*output = be32toh((even_bits & MASK) | ((odd_bits & MASK) << 1));
+		input++;
+		output++;
 	}
+	return (chksum & MASK);
+
 }
-#endif
 
 void bin_dump(unsigned char val)
 {
@@ -77,13 +85,13 @@ struct mfm_sector {
         unsigned char even_data[512];
 } __attribute__((packed));
 
-unsigned int decode_mfm_sector(unsigned char *buf, int mfm_sector_len)
+unsigned int decode_mfm_sector(unsigned char *buf, int mfm_sector_len, uint8_t *data_buf)
 {
         unsigned int info;
-        int label[4];
-        int head_chksum;
-        int data_chksum;
-        int chksum = 0L;
+        //int label[4];
+        unsigned int head_chksum;
+        unsigned int data_chksum;
+        unsigned int chksum = 0L;
         struct mfm_sector *sector = (struct mfm_sector *)buf;
 	/*
         hexdump(buf, 8);
@@ -115,21 +123,23 @@ unsigned int decode_mfm_sector(unsigned char *buf, int mfm_sector_len)
 
         //printf("Sector info: 0x%08x\n", info); 
 	//printf("Size of sector: 0x%x\n", sizeof(struct mfm_sector));
-        printf("Odd: 0x%08x | Even: 0x%08x\n", sector->odd_info, sector->even_info);
-	printf("0x%08x: Format magic: 0x%02x, Cylinder Number: %u, Head: %s, sector_number: %u - until end 0x%u\n",
+        //printf("Odd: 0x%08x | Even: 0x%08x\n", sector->odd_info, sector->even_info);
+	/*
+	printf("0x%08x: Format magic: 0x%02x, Cylinder Number: %u, Head: %s, sector_number: %2u - until end 0x%u\n",
                         info,
                         (info & 0xff000000) >> 24,
                         ((info & 0x00ff0000) >> 16) >> 1,
                         (((info & 0x00ff0000) >> 16) & 0x1) ? "LOWER" : "UPPER",
                         (info & 0x0000ff00) >> 8,
                         (info & 0x000000ff));
+	*/
 
 
-        label[0] = ((sector->odd_label[0] & MASK) << 1) | (sector->even_label[0] & MASK);
-        label[1] = ((sector->odd_label[1] & MASK) << 1) | (sector->even_label[1] & MASK);
-        label[2] = ((sector->odd_label[2] & MASK) << 1) | (sector->even_label[2] & MASK);
-        label[3] = ((sector->odd_label[3] & MASK) << 1) | (sector->even_label[3] & MASK);
-        printf("Label: 0x%08x 0x%08x 0x%08x 0x%08x\n", label[0], label[1], label[2], label[3]);
+        //label[0] = ((sector->odd_label[0] & MASK) << 1) | (sector->even_label[0] & MASK);
+        //label[1] = ((sector->odd_label[1] & MASK) << 1) | (sector->even_label[1] & MASK);
+        //label[2] = ((sector->odd_label[2] & MASK) << 1) | (sector->even_label[2] & MASK);
+        //label[3] = ((sector->odd_label[3] & MASK) << 1) | (sector->even_label[3] & MASK);
+        //printf("Label: 0x%08x 0x%08x 0x%08x 0x%08x\n", label[0], label[1], label[2], label[3]);
 
         head_chksum = ((sector->odd_h_chksum & MASK) << 1) | (sector->even_h_chksum & MASK);
         chksum ^= sector->odd_info;
@@ -150,8 +160,17 @@ unsigned int decode_mfm_sector(unsigned char *buf, int mfm_sector_len)
         }
         chksum = 0L;
 
+	if (!data_buf) {
+		return info;
+	}
+
         data_chksum = ((sector->odd_d_chksum & MASK) << 1) | (sector->even_d_chksum & MASK);
-        printf("Data Checksum: 0x%08x\n", data_chksum);
+	chksum = decode_data(sector->odd_data, 1024, data_buf);
+	if (chksum != data_chksum) {
+                printf("Calculated Data Chksum: 0x%08x\n", chksum);
+                printf("Data Checksum: 0x%08x\n", data_chksum);
+	}
+	//hexdump(decoded_data, 512);
 
         return info;
 }
@@ -159,14 +178,39 @@ unsigned int decode_mfm_sector(unsigned char *buf, int mfm_sector_len)
 void decode_track(unsigned char *buf, int mfm_sector_len, int mfm_sector_count)
 {
         int i;
+	unsigned int info;
+	uint8_t sector;
+	unsigned char b[512];
+	unsigned char *data_buf = malloc(512 * mfm_sector_count);
+	if (!data_buf) return;
+
         for (i=0; i<mfm_sector_count; i++) {
-                decode_mfm_sector(buf, mfm_sector_len);
+                info = decode_mfm_sector(buf, mfm_sector_len, b);
+		sector = (info >> 8);
+		memcpy(data_buf + (sector * 512), b, 512);
                 buf += mfm_sector_len;
         }
+
+	hexdump(data_buf, 512*mfm_sector_count);
+	free(data_buf);
+}
+
+static struct pru * pru;
+void read_track(unsigned char * track)
+{
+	int i;
+	unsigned char * sector = track;
+	sector = track;
+	for (i = 0; i < 11; i++) {
+		// The firmware is hardcoded to read 0x1900 bytes...
+		// We only read one sector!
+	        pru_read_sector(pru);
+		memcpy(sector, pru->shared_ram, 0x1900);
+		sector += 0x1900;
+	}
 }
 
 
-static struct pru * pru;
 int init_test(int argc, char ** argv)
 {
 	printf("Test\n");
@@ -175,32 +219,19 @@ int init_test(int argc, char ** argv)
 
 int init_read(int argc, char ** argv)
 {
-	int i;
-	unsigned char * sector;
-	unsigned char * buf = malloc(0x1900 * 11);
-	if (!buf) {
+	unsigned char * track = malloc(0x1900 * 11);
+	if (!track) {
 		fprintf(stderr, "Failed to alloc memory!\n");
 		return -1;
 	}
 
         pru_start_motor(pru);
-	sector = buf;
-	for (i = 0; i < 11; i++) {
-		// The firmware is hardcoded to read 0x1900 bytes...
-		// We only read one sector!
-	        pru_read_sector(pru);
-		memcpy(sector, pru->shared_ram, 0x1900);
-		sector += 0x1900;
-	}
+	read_track(track);	
         pru_stop_motor(pru);
 
-	sector = buf;
-	for (i = 0; i < 11; i++) {
-		decode_track(sector, 0x1900, 1);
-		sector += 0x1900;
-	}
+	decode_track(track, 0x1900, 11);
 
-	free(buf);
+	free(track);
 	return 0;
 }
 
@@ -215,7 +246,7 @@ int init_identify(int argc, char ** argv)
 
         pru_start_motor(pru);
         pru_read_sector(pru);
-	sector_info = decode_mfm_sector(pru->shared_ram, 0x1900);
+	sector_info = decode_mfm_sector(pru->shared_ram, 0x1900, NULL);
 	cur_cyl = ((sector_info & 0x00ff0000) >> 16) >> 1;
         
         if (cur_cyl != target_cyl) {
@@ -235,20 +266,8 @@ int init_identify(int argc, char ** argv)
 
 int reset_drive(int argc, char ** argv)\
 {
-	unsigned int sector_info;
-        int cur_cyl;
-
         pru_start_motor(pru);
-        pru_read_sector(pru);
-	sector_info = decode_mfm_sector(pru->shared_ram, 0x1900);
-	cur_cyl = ((sector_info & 0x00ff0000) >> 16) >> 1;
-
-        if (cur_cyl) {
-                pru_set_head_dir(pru, PRU_HEAD_DEC);
-                pru_step_head(pru, cur_cyl);
-        }
-
-        printf("Head correct!\n");
+	pru_reset_drive(pru);
         pru_stop_motor(pru);
         return 0;
 }

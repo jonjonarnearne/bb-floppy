@@ -193,3 +193,17 @@ void pru_step_head(struct pru * pru, uint16_t count)
 
 	return;
 }
+
+void pru_reset_drive(struct pru * pru)
+{
+	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
+        if (!pru->running) return;
+
+	intf->command = COMMAND_RESET_DRIVE;
+        prussdrv_pru_wait_event(PRU_EVTOUT_0);
+        prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
+	if (intf->command != (COMMAND_RESET_DRIVE & 0x7f))
+                printf("Got wrong Ack: 0x%02x\n", intf->command);
+
+	return;
+}

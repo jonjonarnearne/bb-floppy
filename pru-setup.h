@@ -23,4 +23,5 @@ void pru_read_sector(struct pru * pru);
 
 void pru_set_head_dir(struct pru * pru, enum pru_head_dir dir);
 void pru_step_head(struct pru * pru, uint16_t count);
+void pru_reset_drive(struct pru * pru);
 #endif

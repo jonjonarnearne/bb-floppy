@@ -88,6 +88,7 @@ WAIT_FOR_COMMAND:
         qbeq READ_SECTOR, interface.command, COMMAND_READ_SECTOR
         qbeq SET_HEAD_DIR, interface.command, COMMAND_SET_HEAD_DIR
         qbeq STEP_HEAD, interface.command, COMMAND_STEP_HEAD
+        qbeq RESET_DRIVE, interface.command, COMMAND_RESET_DRIVE
 
         jmp  WAIT_FOR_COMMAND
 
@@ -113,39 +114,32 @@ START_MOTOR:
 spin_up_time:
         dec  r20
         qbne spin_up_time, r20, #0
-
-        and  interface.command, interface.command, 0x7f
-        sbbo interface.command, GLOBAL.pruMem, \
-                                OFFSET(interface.command), \
-                                SIZE(interface)
-        mov  r31.b0, PRU0_ARM_INTERRUPT+16
-        jmp  WAIT_FOR_COMMAND
+        jmp  SEND_ACK
 
 STOP_MOTOR:
         set  PIN_DRIVE_ENABLE_MOTOR
-        and  interface.command, interface.command, 0x7f
-        sbbo interface.command, GLOBAL.pruMem, \
-                                OFFSET(interface.command), \
-                                SIZE(interface)
-        mov  r31.b0, PRU0_ARM_INTERRUPT+16
-        jmp  WAIT_FOR_COMMAND
+        jmp  SEND_ACK
 
 SET_HEAD_DIR:
         clr  PIN_HEAD_DIR
-        qbeq head_dir_inc, interface.argument, #1
+        qbeq SEND_ACK, interface.argument, #1
         set  PIN_HEAD_DIR
-head_dir_inc:
-        and  interface.command, interface.command, 0x7f
-        sbbo interface.command, GLOBAL.pruMem, \
-                                OFFSET(interface.command), \
-                                SIZE(interface.command)
-
-        mov  r31.b0, PRU0_ARM_INTERRUPT+16
-        jmp  WAIT_FOR_COMMAND
+        jmp  SEND_ACK
 
 STEP_HEAD:
         jal  STACK.ret_addr, fnStep_Head
+        jmp  SEND_ACK
 
+RESET_DRIVE:
+        // If we are at track zero, do nothing
+        qbbc SEND_ACK, PIN_TRACK_ZERO
+
+        set  PIN_HEAD_DIR
+        ldi  interface.argument, #0
+        jal  STACK.ret_addr, fnStep_Head
+        jmp  SEND_ACK
+
+SEND_ACK:
         and  interface.command, interface.command, 0x7f
         sbbo interface.command, GLOBAL.pruMem, \
                                 OFFSET(interface.command), \
@@ -331,6 +325,7 @@ fnStep_Head:
         rcp  step_head.step_count, interface.argument    
         qblt end_step_head, step_head.step_count, #80 //Programming error
 do:
+        M_CHECK_ABORT
 
         clr  PIN_HEAD_STEP
 
@@ -342,14 +337,21 @@ delay_lo:
         qbne delay_lo, step_head.timer, #0
 
         set  PIN_HEAD_STEP
+        
+        ldi  step_head.timer.w0, #0x1a80
+        ldi  step_head.timer.w2, #0x0006
+        qbne normal_step, step_head.step_count, #0
+        qbbc done, PIN_HEAD_DIR // This is a programming error, we forgot to step out
+        // We are resetting the drive!
+        qbbs cylinder_delay, PIN_TRACK_ZERO
+        jmp done
 
+normal_step:
         dec  step_head.step_count
         qbeq done, step_head.step_count, #0
 
         // DELAY PER CYLINDER - Increment
         // 4ms = 4 000 000ns = 400 000 = 0x 00 06 1a 80
-        ldi  step_head.timer.w0, #0x1a80
-        ldi  step_head.timer.w2, #0x0006
 cylinder_delay:
         dec  step_head.timer
         qbne cylinder_delay, step_head.timer, #0
