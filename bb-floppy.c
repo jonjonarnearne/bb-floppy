@@ -6,10 +6,8 @@
 #include <signal.h>
 #include <endian.h>
 
-#include <prussdrv.h>
-#include <pruss_intc_mapping.h>
+#include "pru-setup.h"
 
-#define PRU_NUM0	0
 void hexdump(const void *b, size_t len)
 {
     int i;
@@ -169,38 +167,49 @@ void decode_track(unsigned char *buf, int mfm_sector_len, int mfm_sector_count)
         }
 }
 
-static uint8_t * volatile ram;			// 8Kb // 0x2000 // 8192
-static uint8_t * volatile shared_ram;		// 12Kb	// 0x3000 // 12288
 static void leave(int sig)
 {
-        ram[0] = 0xff;
+        //ram[0] = 0xff;
         printf("\n");
 }
 
-enum bb_floppy_mode {
-	MODE_TERM = 0,
-	MODE_IDENTIFY,
-	MODE_READ
-};
-static const struct md {
-	enum bb_floppy_mode mode;
-	char name[30];
-	char short_help[128];
+int init_test(int argc, char ** argv)
+{
+	printf("Test\n");
+	return 0;
+}
+int init_read(int argc, char ** argv)
+{
+	printf("Read\n");
+	return 0;
+}
+int init_identify(int argc, char ** argv)
+{
+	printf("Identify\n");
+	return 0;
+}
+
+typedef int (*fn_init_ptr)(int, char **);
+static const struct modes {
+	const char *name;
+	const char *short_help;
+	fn_init_ptr init;
 } modes[] = {
-{ MODE_IDENTIFY, "identify", "print name of disk, and exit" },
-{ MODE_READ, "read", "read entire disk to file" },
-{ 0, 0, 0}
+	{ "identify", "print name of disk, and exit", init_identify },
+	{ "read", "read entire disk to file", init_read },
+	{ "test", "run a short test", init_test },
+	{ NULL, NULL }
 };
 
 void usage(void)
 {
-	const struct md *m = modes;
+	const struct modes *m = modes;
 	printf(
 		"usage: bb-floppy <command> [<args>]\n"
 		"\n"
 		"command must be one of:\n"
 	);
-	while(m->mode != MODE_TERM) {
+	while(m->name) {
 		printf("    %s\t%s\n", m->name, m->short_help);
 		m++;
 	}
@@ -210,23 +219,39 @@ void usage(void)
 int main(int argc, char **argv)
 {
 	int rc;
-	const struct md *m = modes;
-	enum bb_floppy_mode cur_mode = MODE_TERM;
+	const struct modes *m = modes;
+	struct pru * pru;
 
 	if (argc == 1) {
 		usage();
 		exit(1);
 	}
 
-	while(m->mode != MODE_TERM) {
-		if (!strncmp(m->name, argv[1], strlen(m->name))) {
-			cur_mode = m->mode;
+	while(m->name) {
+		if (!strncmp(m->name, argv[1], strlen(m->name)))
 			break;
-		}
 		m++;
 	}
-	exit(0);
 
+	if (m->name == NULL) {
+		fprintf(stderr, "fatal: Unknown command: %s\n\n", argv[1]);
+		usage();
+		exit(1);
+	}
+
+	m->init(argc - 1, argv + 1);
+	pru = pru_setup();
+	if (!pru)
+		exit(1);
+
+	pru_wait_event(pru);
+	pru_clear_event(pru);
+	pru_exit(pru);
+
+	exit(0);
+}
+
+#if 0
         //FILE *fp;
 	int mfm_sector_len = 0x1900;
         unsigned int * volatile counter;
@@ -242,46 +267,13 @@ int main(int argc, char **argv)
         mfm_sector_buf = track_buf;
 
 	/* Initialize the interrupt controller data */
-	tpruss_intc_initdata pruss_intc_initdata = PRUSS_INTC_INITDATA;
-
-	/* Initialize PRU */
-	prussdrv_init();
-	printf("Starting blinker!\n");
-
-	rc = prussdrv_open(PRU_EVTOUT_0);
-	if (rc) {
-		fprintf(stderr, "Failed to open pruss device\n");
-		return rc;
-	}
-
-	/* Get the interrupt initialized */
-	prussdrv_pruintc_init(&pruss_intc_initdata);
-
-	rc = prussdrv_map_prumem(PRUSS0_PRU0_DATARAM, (void **)&ram);
-	if (rc) {
-		fprintf(stderr, "Failed to setup PRU_DRAM\n");
-		return rc;
-	}
-	rc = prussdrv_map_prumem(PRUSS0_SHARED_DATARAM, (void **)&shared_ram);
-	if (rc) {
-		fprintf(stderr, "Failed to setup PRU_SHARED_RAM\n");
-		return rc;
-	}
-
-        memset(ram, 0x00, 0x2000);
-	memset(shared_ram, 0x00, mfm_sector_len);
         signal(SIGINT, leave);
 
 	read_len = (unsigned int *)(ram + 4);
 	read_len[0] = mfm_sector_len;
 
-	rc = prussdrv_exec_program(PRU_NUM0, "./bb-floppy.bin");
-        printf("exec returned %d\n", rc);
-        if (rc) {
-                fprintf(stderr, "Failed to load firmware\n");
-                return rc;
-        }
 
+	/*
         while(1) {
 	        prussdrv_pru_wait_event(PRU_EVTOUT_0);
 	        prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
@@ -298,6 +290,7 @@ int main(int argc, char **argv)
                         }
                 }
         }
+	*/
 
 
         printf("Trigger - byte: 0x%02x\n", ram[0]);
@@ -309,8 +302,6 @@ int main(int argc, char **argv)
         //hexdump(ram + 0x200, mfm_sector_len);
 	//printf("Total: %x\n", *(unsigned int *)(ram + 4));
 	//printf("Total: %x\n", *(unsigned int *)(ram + 8));
-	prussdrv_pru_disable(PRU_NUM0);
-	prussdrv_exit();
 
         printf("\nClean Exit!\n");
         decode_track(track_buf, mfm_sector_len, mfm_sector_count);
@@ -327,4 +318,5 @@ int main(int argc, char **argv)
 
 	return 0;
 }
+#endif
 
