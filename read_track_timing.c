@@ -300,6 +300,7 @@ int write_timing(int argc, char ** argv)
 	FILE *fp;
 	int sample_count, c=0, d=0;
 	uint16_t *timing = malloc(45000 * sizeof(*timing));
+        uint16_t val;
 
 	if (!timing) {
 		printf("%s: fatal -- Couldn't allocate memory for buffer!\n",
@@ -318,21 +319,24 @@ int write_timing(int argc, char ** argv)
         pru_set_head_dir(pru, PRU_HEAD_INC);
 
 	fp = fopen(argv[1], "r");
-#if 0
+
+        c = 0;
 	while(!feof(fp)) {
+                if (c % 2)
+                        pru_set_head_side(pru, PRU_HEAD_LOWER);
+                else
+                        pru_set_head_side(pru, PRU_HEAD_UPPER);
+
 		d = fread(&sample_count, sizeof(sample_count), 1, fp);
 		if (!d) continue;
 
 		fread(timing, sizeof(*timing), sample_count, fp);
+	        pru_write_bit_timing(pru, timing, sample_count);
+                if (c % 2)
+                        pru_step_head(pru, 1);
 		c++;
 	}
 	printf("Got %d tracks\n", c);
-#endif
-
-	fread(&sample_count, sizeof(sample_count), 1, fp);
-	fread(timing, sizeof(*timing), sample_count, fp);
-
-	pru_write_bit_timing(pru, timing, sample_count);
 
         pru_stop_motor(pru);
 	free(timing);

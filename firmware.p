@@ -843,6 +843,9 @@ get_bit_timing_wait_index_falling:
         qbbs get_bit_timing_wait_index_falling, PIN_INDEX
 
 get_bit_timing_get_next_bit:
+        // Based on measure with oscilloscope,
+        // The PIN_READ_DATA pin is held LOW
+        // for 700ns before we are back HIGH
         jal  STACK.ret_addr, fnWait_For_Hi
 
         // Measure the time it takes before we get a lo
@@ -859,7 +862,10 @@ get_bit_timing_store:
                                         SIZE(get_bit_timing.timer)
 
         dec  get_bit_timing.sample_count
-        // We add the magic number #22 ~ 675ns (21 ~ 630ns) to get the time when we are lo
+        // We add the magic number #22 ~ 675ns (21 ~ 630ns),
+        // to get the time when we are lo
+        // TODO: consider changing this value to 23 ~ 690ns,
+        // as we measured the low to be 700ns
         add  get_bit_timing.total_time, get_bit_timing.total_time, #21
         add  get_bit_timing.total_time, get_bit_timing.total_time, \
                                         get_bit_timing.timer
@@ -914,34 +920,84 @@ fnWrite_Bit_Timing:
         rcp  write_bit_timing.sample_count, interface.read_count
         rclr write_bit_timing.ram_offset
 
-write_bit_timing_load_timer:
+write_bit_timing_wait_index_high:
+        M_CHECK_ABORT
+        qbbc write_bit_timing_wait_index_high, PIN_INDEX
+
+write_bit_timing_wait_index_falling:
+        M_CHECK_ABORT
+        qbbs write_bit_timing_wait_index_falling, PIN_INDEX
+
+        clr  PIN_WRITE_GATE
+
+        // write_bit_timing_check_loop
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+write_bit_timing_loop:
+        lbbo write_bit_timing.timer, GLOBAL.sharedMem, \
+                                        write_bit_timing.ram_offset, \
+                                        SIZE(write_bit_timing.timer)
+        add  write_bit_timing.timer, write_bit_timing.timer, #0
+write_bit_timing_timer_high:
+        // Each iteration takes 30ns
+        M_CHECK_ABORT
+        dec  write_bit_timing.timer
+        qbne write_bit_timing_timer_high, write_bit_timing.timer, #0
+
+        clr  PIN_WRITE_DATA
+
+        ldi  write_bit_timing.timer, #15
+write_bit_timing_timer_low:
+        M_CHECK_ABORT
+        dec  write_bit_timing.timer
+        qbne write_bit_timing_timer_low, write_bit_timing.timer, #0
+
+        set  PIN_WRITE_DATA
+
+write_bit_timing_check_loop:
+        dec  write_bit_timing.sample_count
+        // Break the loop here if we have consumed all samples!
+        qbeq write_bit_timing_break_loop, write_bit_timing.sample_count, #0 
+
+        add  write_bit_timing.ram_offset, write_bit_timing.ram_offset, \
+                                        SIZE(write_bit_timing.timer)
+
         // Alert ARM when we have read 0x1000 bytes.
-        ldi  write_bit_timing.mask, 0x0fff
-        and  write_bit_timing.mask, write_bit_timing.mask, write_bit_timing.ram_offset
+        ldi  write_bit_timing.mask, 0xfff
+        and  write_bit_timing.mask, write_bit_timing.mask, \
+                                write_bit_timing.ram_offset
+        // We trigger interrupt if ram_offset == 0x1000 | 0x0000 | 0x2000
         qbne write_bit_timing_skip_interrupt, write_bit_timing.mask, #0
 
         // We have read 0x1000 - Notify ARM
         ldi  r31.b0, PRU0_ARM_INTERRUPT+16
-        // We limit the ram_offset to 0x1fff here
+        // Offset is 0x0000 | 0x1000 | 0x2000
+        // We mask 0x1000 and get 0x0000, 0x1000
         ldi  write_bit_timing.mask, 0x1000;
-        and  write_bit_timing.ram_offset, write_bit_timing.ram_offset, write_bit_timing.mask
+        and  write_bit_timing.ram_offset, write_bit_timing.ram_offset, \
+                                                write_bit_timing.mask
+        jmp  write_bit_timing_loop
+
 write_bit_timing_skip_interrupt:
         // We have read 0x1000 - Notify ARM
         nop0 r0, r0, r0
-        // We limit the ram_offset to 0x1fff here
+        // Offset is 0x0000 | 0x1000 | 0x2000
+        // We mask 0x1000 and get 0x0000, 0x1000
         nop0 r0, r0, r0
         nop0 r0, r0, r0
+        jmp  write_bit_timing_loop
 
-        lbbo write_bit_timing.timer, GLOBAL.sharedMem, \
-                                        write_bit_timing.ram_offset, \
-                                        SIZE(write_bit_timing.timer)
-        add  write_bit_timing.ram_offset, write_bit_timing.ram_offset, \
-                                        SIZE(write_bit_timing.timer)
-        dec  write_bit_timing.sample_count
-        // if (0 < sample_count) jmp write_bit_timing_load_timer
-        qblt write_bit_timing_load_timer, write_bit_timing.sample_count, #0 
-        
-write_bit_timing_prologue:
+write_bit_timing_break_loop:
+        set  PIN_WRITE_GATE
+
         rcp  STACK.ret_addr, write_bit_timing.ret_addr
         jmp  STACK.ret_addr
 .leave write_bit_timing_scope

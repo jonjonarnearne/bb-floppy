@@ -366,6 +366,8 @@ void pru_write_bit_timing(struct pru * pru, uint16_t *source,
         if (!pru->running) return;
 
         intf->read_count = sample_count;
+        printf("Sample count: %d, bytes: %d\n", sample_count,
+                                        sample_count * sizeof(*source));
 
         memcpy(dest, source, 0x2000);
         source          += 0x2000/sizeof(*source);
@@ -385,19 +387,25 @@ void pru_write_bit_timing(struct pru * pru, uint16_t *source,
 
                         if (copy_size <= 0) {
                                 fprintf(stderr,
-                        "fatal -- pru request samples on empty buffer!\n");
+                        "fatal -- pru request samples on empty buffer!\n"
+                                "Buffer: %d\n", copy_size);
                                 continue;
                         }
 
                         memcpy(dest, source, copy_size);
                         source += copy_size/sizeof(*source);
+                        sample_count -= copy_size/sizeof(*source);
+                        printf("Adding %d\n", copy_size);
 
-                        if (++mul & 0x1)
+                        if (++mul & 0x1) {
                                 dest += 0x1000/sizeof(*dest);
-                        else
+                        } else {
                                 dest -= 0x1000/sizeof(*dest);
+                        }
                         
-                } else if (intf->command == (COMMAND_WRITE_BIT_TIMING & 0x7f)) {
+                } else if (intf->command ==
+                                (COMMAND_WRITE_BIT_TIMING & 0x7f)) {
+                        printf("Done!\n");
                         break;
                 } else {
                         printf("Got wrong Ack: 0x%02x\n", intf->command);
