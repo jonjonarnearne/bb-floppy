@@ -502,32 +502,33 @@ end_step_head:
 .struct Erase_Track
         .u8   unused
         .u8   bit_count
-        .u16  byte_count
+        .u16  word_count
         .u16  timer
         .u16  word
+        .u32  delay_timer
 .ends
 .enter erase_track_scope
-.assign Erase_Track, r20, r21, erase_track
+.assign Erase_Track, r20, r22, erase_track
 fnErase_Track:
-        clr  PIN_WRITE_GATE
         clr  PIN_DRIVE_ENABLE_MOTOR
 
-        ldi  r5.w0, #0x4b40
-        ldi  r5.w2, #0x004c
-er_spin_up:
-        dec  r5
-        qbne er_spin_up, r5, #0
+        //   600ms spin up! = 6.0e8 == 6.0e9/10
+        ldi  erase_track.delay_timer.w0, #0x8700
+        ldi  erase_track.delay_timer.w2, #0x0393
+erase_track_spin_up:
+        dec  erase_track.delay_timer
+        qbne erase_track_spin_up, erase_track.delay_timer, #0
 
-        ldi  r6.w0, #0x6400//#0x3200
-        ldi  r6.w2, #0
+        ldi  erase_track.word_count, #0x1900
+
         // Must wait not wait more than 8us before writing data.
+        clr  PIN_WRITE_GATE
 
 er_get_byte:
-        ldi  erase_track.word, #0xaaaa //0x8944 //0xaaaa
+        ldi  erase_track.word, #0xaaaa
         ldi  erase_track.bit_count, #16
-        dec  r6.w0
-        qbeq er_epilog, r6.w0, #0
-
+        dec  erase_track.word_count
+        qbeq er_epilog, erase_track.word_count, #0
 
 do_erase:
         qbbc erase_lo, erase_track.word, #15
@@ -536,10 +537,10 @@ erase_hi:
         clr  PIN_WRITE_DATA
         jmp  erase_dly_setup
 erase_lo:
-        set  PIN_WRITE_DATA
+        nop0 r0, r0, r0
         nop0 r0, r0, r0
 
-        // We should only pulse the WRITE_DATA_PIN on ones!
+        // We should only pulse the WRITE_DATA_PIN on once!
         // Write pulse == 0.2 ~ 1.1 us
 erase_dly_setup:
         ldi  erase_track.timer, #15
@@ -551,7 +552,8 @@ erase_dly:
 
         set  PIN_WRITE_DATA
 
-        ldi  erase_track.timer, #50 //#117 //#50 // 1500ns // 3500 + 500 low = 4000 ns = 4us
+        // Now delay 1500ns (-30ns) for a total of 2000ns | 2us
+        ldi  erase_track.timer, #50
 lo_dly_adf:
         M_CHECK_ABORT
         dec  erase_track.timer
@@ -569,11 +571,10 @@ er_epilog:
 
         set  PIN_WRITE_GATE
         // Must wait 650us before stopping motor aften PIN_WRITE_GATE == FALSE
-        ldi  r5.w0, #65000
-        ldi  r5.w2, #0
+        ldi  erase_track.delay_timer, #65000
 er_spin_down:
-        dec  r5
-        qbne er_spin_down, r5, #0
+        dec  erase_track.delay_timer
+        qbne er_spin_down, erase_track.delay_timer, #0
 
         set  PIN_DRIVE_ENABLE_MOTOR
 
@@ -592,17 +593,9 @@ er_spin_down:
 .enter write_track_scope
 .assign Write_Track, r20, r23, write_track
 fnWrite_Track:
-        //   Must wait not wait more than 8us before writing data.
         clr  PIN_DRIVE_ENABLE_MOTOR
 
-        //   50 msec spin up time?
-        //   Could be tweaked!
-        //ldi  write_track.delay_timer.w0, #0x4b40
-        //ldi  write_track.delay_timer.w2, #0x004c
-        //   1000ms spin up!
-        //ldi  write_track.delay_timer.w0, #0xe100
-        //ldi  write_track.delay_timer.w2, #0x05d5
-        //   600ms spin up!
+        //   600ms spin up! = 6.0e8 == 6.0e9/10
         ldi  write_track.delay_timer.w0, #0x8700
         ldi  write_track.delay_timer.w2, #0x0393
 write_track_spin_up:
@@ -613,11 +606,12 @@ write_track_spin_up:
         //                 + Sync dword 0x44894489 = 4  bytes
         //                 + Track Head 14 dword   = 56   bytes
         //                 + Track Data            = 1024 bytes
-        //                 =                Total  = 1096 bytes * 11 sectors
-        //                 =            Sum Total  = 12056 bytes = 0x2f18
+        //                 =                Total  = 1088 bytes * 11 sectors
+        //                 =            Sum Total  = 11968 bytes = 0x2ec0
         rclr write_track.dword_index
         ldi  write_track.dword_count, #0x2ec4 // Write exactly 0x2ec0 bytes = 11 sectors of 0x440 = 1088
 
+        //   Must wait not wait more than 8us before writing data after WRITE_GATE = TRUE
         clr  PIN_WRITE_GATE
 
 write_track_get_byte:
@@ -626,15 +620,16 @@ write_track_get_byte:
         add  write_track.dword_index, write_track.dword_index, 4                //  5ns
         qbeq write_track_epilogue, write_track.dword_index, \
                                         write_track.dword_count                 //  5ns
-        //ldi  write_track.dword.w0, #0xaaaa
-        //ldi  write_track.dword.w2, #0xaaaa
 
 write_track_write:
         // MFM data is 01|001|0001
+        // 0x0000
+        //               a    a    a    a
         // 0xaaaa = 0b1010 1010 1010 1010
-        // 0x8944
-        //    4    8  6  4    8     6    8  6  4    8   6/8
-        // 0b 1000 1001 0100 0100 | 1000 1001 0100 0100 ?
+        // Sync
+        //               4    4    8    9
+        // 0x4489 = 0b0100 0100 1000 1001
+
         qbbc write_track_bit_0, write_track.dword, #31
 write_track_bit_1:
         clr  PIN_WRITE_DATA
