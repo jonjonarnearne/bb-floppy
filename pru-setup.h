@@ -62,7 +62,7 @@ void pru_write_track(struct pru * pru, void *track);
 
 void pru_set_head_dir(struct pru * pru, enum pru_head_dir dir);
 void pru_set_head_side(struct pru * pru, enum pru_head_side side);
-void pru_step_head(struct pru * pru, uint16_t count);
+void pru_step_head(struct pru * pru, unsigned short count);
 void pru_reset_drive(struct pru * pru);
-void pru_get_bit_timing(struct pru * pru, void * data);
+int pru_get_bit_timing(struct pru * pru, uint16_t ** data);
 #endif

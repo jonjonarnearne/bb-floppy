@@ -645,13 +645,32 @@ int reset_drive(int argc, char ** argv)
 
 int read_timing(int argc, char ** argv)
 {
-        uint16_t *timing = malloc(sizeof(uint16_t) * 100200/2);
-        if (!timing)
-                return -1;
+	FILE *fp;
+        uint16_t *timing;
+	int sample_count, i;
+
+	if (argc != 2) {
+		usage();
+		printf("You must give a filename to a timing file\n");
+		return -1;	
+	}
 
         pru_start_motor(pru);
-	pru_get_bit_timing(pru, timing);
+	sample_count = pru_get_bit_timing(pru, &timing);
         pru_stop_motor(pru);
+
+	printf("Got %d samples\n", sample_count);
+	for (i=0; i < sample_count; i++) {
+		if (timing[i] > 0xff)
+			printf("[%d] - Found > 0xff: %d\n", i, timing[i]);
+		if (timing[i] < 105)
+			printf("[%d] - Found < 105: %d\n", i, timing[i]);
+
+	}
+
+	fp = fopen(argv[1], "w");
+	fwrite(timing, sizeof(*timing), sample_count, fp);
+	fclose(fp);
 
         free(timing);
         return 0;

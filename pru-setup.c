@@ -295,17 +295,28 @@ void pru_read_raw_track(struct pru * pru, void * data, uint32_t len,
 	return;
 }
 
-void pru_get_bit_timing(struct pru * pru, void * data)
+int pru_get_bit_timing(struct pru * pru, uint16_t ** data)
 {
-        int len = 100200/sizeof(uint16_t); // number of items
+        int init_samp_count, sample_count = 0xc3b4; // This is 50100 samples - 100200 bits
+
         uint8_t mul = 0;
-        uint16_t *dest = data;
+        uint16_t *dest;
         uint16_t * volatile source = (uint16_t * volatile)pru->shared_ram;
 
 	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
-        if (!pru->running) return;
-        memset(pru->shared_ram, 0x00, 0x3000);
+        if (!pru->running)
+		return 0;
 
+	*data = NULL;
+        dest = malloc(sample_count * sizeof(*dest));
+        if (!dest)
+		return 0;
+
+	init_samp_count = sample_count;
+	*data = dest;
+        memset((unsigned char *)dest, 0x00, sample_count * sizeof(*dest));
+
+        memset(pru->shared_ram, 0x00, 0x3000);
 	intf->command = COMMAND_GET_BIT_TIMING;
 
         while(1) {
@@ -315,14 +326,9 @@ void pru_get_bit_timing(struct pru * pru, void * data)
                 // We read 0x1000 bytes at a time, from the 0x3000byte buffer
                 // jumping back and forth in sync with the PRU
 	        if (intf->command == COMMAND_GET_BIT_TIMING) {
-                        /*
-                        for(i=0; i < 0x1000/sizeof(*dest); i++) {
-                                dest[i] = htobe32(source[i]);
-                        }
-                        */
                         memcpy(dest, source, 0x1000);
                         dest += 0x1000/sizeof(*dest);
-                        len -= 0x1000/sizeof(*dest);
+                        sample_count -= 0x1000/sizeof(*dest);
                         if (++mul & 0x1)
                                 source += 0x1000/sizeof(*dest);
                         else
@@ -336,12 +342,14 @@ void pru_get_bit_timing(struct pru * pru, void * data)
                         break;
                 }
         }
-        if (len > 0x1000) {
-                fprintf(stderr, "fatal: len is: %d after read loop!\n", len);
-                return;
-        }
-        if (len > 0) 
-                memcpy(dest, source, len * sizeof(*dest));
+        if (sample_count > 0) 
+                memcpy(dest, source, 0x1000);
+
+        printf("Sampled %d\n", intf->read_count);
+        printf("Sampled %d ns\n", intf->read_count * 30);
+        printf("Sampled %d us\n", intf->read_count * 30 / 1000);
+
+	return (init_samp_count - intf->sync_word);
 }
 
 void pru_erase_track(struct pru * pru)
