@@ -592,7 +592,6 @@ er_spin_down:
 .enter write_track_scope
 .assign Write_Track, r20, r23, write_track
 fnWrite_Track:
-        clr  PIN_WRITE_GATE
         //   Must wait not wait more than 8us before writing data.
         clr  PIN_DRIVE_ENABLE_MOTOR
 
@@ -601,8 +600,11 @@ fnWrite_Track:
         //ldi  write_track.delay_timer.w0, #0x4b40
         //ldi  write_track.delay_timer.w2, #0x004c
         //   1000ms spin up!
-        ldi  write_track.delay_timer.w0, #0xe100
-        ldi  write_track.delay_timer.w2, #0x05d5
+        //ldi  write_track.delay_timer.w0, #0xe100
+        //ldi  write_track.delay_timer.w2, #0x05d5
+        //   600ms spin up!
+        ldi  write_track.delay_timer.w0, #0x8700
+        ldi  write_track.delay_timer.w2, #0x0393
 write_track_spin_up:
         dec  write_track.delay_timer
         qbne write_track_spin_up, write_track.delay_timer, #0
@@ -615,6 +617,8 @@ write_track_spin_up:
         //                 =            Sum Total  = 12056 bytes = 0x2f18
         rclr write_track.dword_index
         ldi  write_track.dword_count, #0x2ec4 // Write exactly 0x2ec0 bytes = 11 sectors of 0x440 = 1088
+
+        clr  PIN_WRITE_GATE
 
 write_track_get_byte:
         lbbo write_track.dword, GLOBAL.sharedMem, write_track.dword_index, 4    // 15ns

@@ -444,17 +444,15 @@ int init_write_track(int argc, char ** argv)
 	int i;
 	uint8_t data[512] = {0};
 	uint32_t *sector;
-	unsigned char *track = malloc(0x3000); //12800 bytes - 1 raw track
+	unsigned char *track = malloc(0x3000);
 	if (!track) return -1;
 
 	memset(track, 0xaa, 0x3000);
 	for(i=0; i<11; i++) {
 		sector = (uint32_t *)(track + (RAW_MFM_SECTOR_SIZE * i));
-		sector[1] = 0x44894489; // Correct endian
-		//sector[1] = 0x89448944;
+		sector[1] = 0x44894489;
 		encode_mfm_sector(i, (11-i), 0, PRU_HEAD_UPPER, data, &sector[2]);
-		sector[RAW_MFM_SECTOR_SIZE/4] = 0x00000000;
-                set_mfm_clock(sector, RAW_MFM_SECTOR_SIZE + 4);
+		set_mfm_clock(sector, RAW_MFM_SECTOR_SIZE);
 	}
 
 	for (i=0; i<11; i++) {
@@ -466,8 +464,7 @@ int init_write_track(int argc, char ** argv)
 	free(track);
 
 	pru_write_track(pru, track);
-
-        printf("Done!\n\n");
+	printf("Done!\n");
 
 	return 0;
 }
