@@ -125,6 +125,7 @@ unsigned int decode_mfm_sector(unsigned char *buf, int mfm_sector_len, uint8_t *
         chksum ^= sector->even_label[3];
         chksum &= MASK;
         if (chksum != head_chksum) {
+                print_sector_info(info);
                 printf("Calculated Head Chksum: 0x%08x\n", chksum);
                 printf("Head Checksum: 0x%08x\n", head_chksum);
         }
@@ -137,6 +138,7 @@ unsigned int decode_mfm_sector(unsigned char *buf, int mfm_sector_len, uint8_t *
         data_chksum = ((sector->odd_d_chksum & MASK) << 1) | (sector->even_d_chksum & MASK);
 	chksum = decode_data(sector->odd_data, 1024, data_buf);
 	if (chksum != data_chksum) {
+                print_sector_info(info);
                 printf("Calculated Data Chksum: 0x%08x\n", chksum);
                 printf("Data Checksum: 0x%08x\n", data_chksum);
 	}
@@ -150,22 +152,25 @@ static struct pru * pru;
  * If we read an entire track,
  * we might have to sync to the sync byte for successive sectors
  */
-static void decode_track()
+static void decode_track(uint8_t *mfm_track, uint8_t *data_track)
 {
 	unsigned int info, i, e, shifts, dwords_len;
         uint8_t * volatile ram;
         uint32_t * volatile dwords;
         uint32_t mask = 0;
 	uint8_t data[512];
-        uint8_t *sectors = malloc(1080 * 11);
-        if (!sectors) return;
+        uint8_t *mfm_sectors = mfm_track;
+	uint8_t *data_sectors = data_track;
 
         ram = pru->shared_ram;
 
         for (e = 0; e<11; e++) {
                 info = decode_mfm_sector(ram, 1080, data);
                 //print_sector_info(info);
-                memcpy(sectors + (1080 * ((info & 0xff00) >> 8)), ram, 1080);
+		if (mfm_sectors)
+			memcpy(mfm_sectors + (1080 * ((info & 0xff00) >> 8)), ram, 1080);
+		if (data_sectors)
+			memcpy(data_sectors + (512 * ((info & 0xff00) >> 8)), data, 512);
 
                 if (e == 10) break;
 
@@ -220,12 +225,6 @@ static void decode_track()
 
                 ram += 8; // Skip the SYNC_WORD
         }
-
-        for(e = 0; e < 11; e++) {
-                info = decode_mfm_sector(sectors + (1080 * e), 1080, data);
-                //print_sector_info(info);
-        }
-        free(sectors);
 }
 
 
@@ -237,12 +236,24 @@ int init_test(int argc, char ** argv)
 
 int init_read(int argc, char ** argv)
 {
+        FILE *fp;
 	int i;
-	unsigned char * track = malloc(MFM_TRACK_LEN * 11);
-	if (!track) {
+	uint8_t *mfm_track, *mfm_disk, *data_track, *data_disk;
+	char filename[255];
+	if (argc != 3) {
+		fprintf(stderr, "You must specify a filename\n");
+		return -1;
+	}
+
+	mfm_disk = malloc((1080 * 11 * 2 * 80) + (512 * 11 * 2 * 80));
+	if (!mfm_disk) {
 		fprintf(stderr, "Failed to alloc memory!\n");
 		return -1;
 	}
+
+	mfm_track = mfm_disk;
+	data_disk = mfm_disk + (1080 * 11 * 2 * 80);
+	data_track = data_disk;
 
         pru_start_motor(pru);
 	pru_reset_drive(pru);
@@ -252,14 +263,29 @@ int init_read(int argc, char ** argv)
 		printf("\nTrack: %d\n", i);
                 pru_set_head_side(pru, PRU_HEAD_UPPER);
 		pru_read_track(pru);	
-                decode_track();
+                decode_track(mfm_track, data_track);
+		mfm_track += (1080 * 11);
+		data_track += (512 * 11);
                 pru_set_head_side(pru, PRU_HEAD_LOWER);
-		pru_read_track(pru);	
-                decode_track();
-		if (i < 79) pru_step_head(pru, 1);
+		pru_read_track(pru);
+                decode_track(mfm_track, data_track);
+		mfm_track += (1080 * 11);
+		data_track += (512 * 11);
+		if (i < 79) 
+			pru_step_head(pru, 1);
 	}
         pru_stop_motor(pru);
-	free(track);
+
+	snprintf(filename, 255, "%s.mfm", argv[2]);
+	fp = fopen(filename, "w");
+	fwrite(mfm_disk, 1080, 11 * 2 * 80, fp);
+	fclose(fp);
+	snprintf(filename, 255, "%s.adf", argv[2]);
+	fp = fopen(filename, "w");
+	fwrite(data_disk, 512, 11 * 2 * 80, fp);
+	fclose(fp);
+
+	free(mfm_disk);
 	return 0;
 }
 
@@ -269,7 +295,7 @@ int init_read_track(int argc, char ** argv)
 	pru_read_track(pru);
 	pru_stop_motor(pru);
 
-        decode_track();
+        decode_track(NULL,NULL);
 
 	return 0;
 }
@@ -375,7 +401,7 @@ int main(int argc, char **argv)
 
         signal(SIGINT, int_handler);
 
-	m->init(argc - 1, argv + 1);
+	m->init(argc, argv);
 
 	pru_exit(pru);
 
