@@ -109,6 +109,7 @@ WAIT_FOR_COMMAND:
         qbeq WRITE_TRACK, interface.command, COMMAND_WRITE_TRACK
         qbeq READ_TRACK, interface.command, COMMAND_READ_TRACK
         qbeq GET_BIT_TIMING, interface.command, COMMAND_GET_BIT_TIMING
+        qbeq WRITE_BIT_TIMING, interface.command, COMMAND_WRITE_BIT_TIMING
         qbeq TEST_TRACK_0, interface.command, COMMAND_TEST_TRACK_0
 
         jmp  WAIT_FOR_COMMAND
@@ -223,6 +224,11 @@ GET_BIT_TIMING:
         jal  STACK.ret_addr, fnWait_For_Hi
         jal  STACK.ret_addr, fnWait_For_Lo
         jal  STACK.ret_addr, fnGet_Bit_Timing
+        jmp  SEND_ACK
+
+WRITE_BIT_TIMING:
+        //  We might try to read an entire track here.
+        jal  STACK.ret_addr, fnWrite_Bit_Timing
         jmp  SEND_ACK
 
 SEND_ACK:
@@ -859,7 +865,7 @@ get_bit_timing_store:
                                         get_bit_timing.timer
 
         // Enable writing of more than 0x3000 bytes.
-        // We write 0x1000, and give allert to the ARM side,
+        // We write 0x1000, and alert the ARM side,
         // we continue to write 0x1000 more, while ARM reads the last 0x1000.
         // Then jump back to 0x00, for the next 0x1000
         ldi  get_bit_timing.timer, 0x0fff;
@@ -891,3 +897,51 @@ get_bit_timing_done:
         jmp  STACK.ret_addr
 .leave get_bit_timing_scope
 
+.struct Write_Bit_Timing
+        .u16  timer
+        .u16  ram_offset        // Position of write pointer
+        .u16  ret_addr
+        .u16  mask
+        .u32  sample_count      // Number of samples to read
+        .u32  total_time
+        .u32  target_time
+.ends
+.enter write_bit_timing_scope
+.assign Write_Bit_Timing, r20, r24, write_bit_timing
+fnWrite_Bit_Timing:
+        rcp  write_bit_timing.ret_addr, STACK.ret_addr
+
+        rcp  write_bit_timing.sample_count, interface.read_count
+        rclr write_bit_timing.ram_offset
+
+write_bit_timing_load_timer:
+        // Alert ARM when we have read 0x1000 bytes.
+        ldi  write_bit_timing.mask, 0x0fff
+        and  write_bit_timing.mask, write_bit_timing.mask, write_bit_timing.ram_offset
+        qbne write_bit_timing_skip_interrupt, write_bit_timing.mask, #0
+
+        // We have read 0x1000 - Notify ARM
+        ldi  r31.b0, PRU0_ARM_INTERRUPT+16
+        // We limit the ram_offset to 0x1fff here
+        ldi  write_bit_timing.mask, 0x1000;
+        and  write_bit_timing.ram_offset, write_bit_timing.ram_offset, write_bit_timing.mask
+write_bit_timing_skip_interrupt:
+        // We have read 0x1000 - Notify ARM
+        nop0 r0, r0, r0
+        // We limit the ram_offset to 0x1fff here
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+
+        lbbo write_bit_timing.timer, GLOBAL.sharedMem, \
+                                        write_bit_timing.ram_offset, \
+                                        SIZE(write_bit_timing.timer)
+        add  write_bit_timing.ram_offset, write_bit_timing.ram_offset, \
+                                        SIZE(write_bit_timing.timer)
+        dec  write_bit_timing.sample_count
+        // if (0 < sample_count) jmp write_bit_timing_load_timer
+        qblt write_bit_timing_load_timer, write_bit_timing.sample_count, #0 
+        
+write_bit_timing_prologue:
+        rcp  STACK.ret_addr, write_bit_timing.ret_addr
+        jmp  STACK.ret_addr
+.leave write_bit_timing_scope

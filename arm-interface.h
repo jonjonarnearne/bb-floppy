@@ -4,20 +4,21 @@
 #define COMMAND_OFFSET 0
 #define COMMAND_SIZE   1
 
-#define COMMAND_QUIT            (0xff)
-#define COMMAND_START_MOTOR     (0x01 | 0x80)
-#define COMMAND_STOP_MOTOR      (0x02 | 0x80)
-#define COMMAND_READ_SECTOR     (0x03 | 0x80)
-#define COMMAND_SET_HEAD_DIR    (0x04 | 0x80)
-#define COMMAND_SET_HEAD_SIDE   (0x05 | 0x80)
-#define COMMAND_STEP_HEAD       (0x06 | 0x80)
-#define COMMAND_RESET_DRIVE     (0x07 | 0x80)
-#define COMMAND_ERASE_TRACK     (0x08 | 0x80)
-#define COMMAND_WRITE_TRACK     (0x09 | 0x80)
-#define COMMAND_READ_TRACK      (0x0a | 0x80)
-#define COMMAND_FIND_SYNC       (0x0b | 0x80)
-#define COMMAND_GET_BIT_TIMING  (0x0c | 0x80)
-#define COMMAND_TEST_TRACK_0    (0x0d | 0x80)
+#define COMMAND_QUIT                    (0xff)
+#define COMMAND_START_MOTOR             (0x01 | 0x80)
+#define COMMAND_STOP_MOTOR              (0x02 | 0x80)
+#define COMMAND_READ_SECTOR             (0x03 | 0x80)
+#define COMMAND_SET_HEAD_DIR            (0x04 | 0x80)
+#define COMMAND_SET_HEAD_SIDE           (0x05 | 0x80)
+#define COMMAND_STEP_HEAD               (0x06 | 0x80)
+#define COMMAND_RESET_DRIVE             (0x07 | 0x80)
+#define COMMAND_ERASE_TRACK             (0x08 | 0x80)
+#define COMMAND_WRITE_TRACK             (0x09 | 0x80)
+#define COMMAND_READ_TRACK              (0x0a | 0x80)
+#define COMMAND_FIND_SYNC               (0x0b | 0x80)
+#define COMMAND_GET_BIT_TIMING          (0x0c | 0x80)
+#define COMMAND_WRITE_BIT_TIMING        (0x0d | 0x80)
+#define COMMAND_TEST_TRACK_0            (0x0e | 0x80)
 
 #ifndef __GNUC__
 .struct ARM_IF

@@ -730,6 +730,7 @@ static const struct modes {
 	{ "reset", "Reset head to cylinder 0", reset_drive },
 	{ "step_head", "Move head [I|O] for <n> steps", init_step_head },
 	{ "read_timing", "get timing info from entire disk", read_timing },
+	{ "write_timing", "write a disk from timing info", write_timing },
 	{ "read_track_timing", "Get a list of bit timings", read_track_timing },
         { "test_track_0", "Return 1 if we are at track 0", test_track_0 },
 	{ NULL, NULL }

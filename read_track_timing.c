@@ -294,3 +294,49 @@ int read_timing(int argc, char ** argv)
 
         return 0;
 }
+
+int write_timing(int argc, char ** argv)
+{
+	FILE *fp;
+	int sample_count, c=0, d=0;
+	uint16_t *timing = malloc(45000 * sizeof(*timing));
+
+	if (!timing) {
+		printf("%s: fatal -- Couldn't allocate memory for buffer!\n",
+								argv[0]);
+		return -1;	
+	}
+
+	if (argc != 2) {
+		usage();
+		printf("You must give a filename to a timing file\n");
+		return -1;	
+	}
+
+        pru_start_motor(pru);
+	pru_reset_drive(pru);
+        pru_set_head_dir(pru, PRU_HEAD_INC);
+
+	fp = fopen(argv[1], "r");
+#if 0
+	while(!feof(fp)) {
+		d = fread(&sample_count, sizeof(sample_count), 1, fp);
+		if (!d) continue;
+
+		fread(timing, sizeof(*timing), sample_count, fp);
+		c++;
+	}
+	printf("Got %d tracks\n", c);
+#endif
+
+	fread(&sample_count, sizeof(sample_count), 1, fp);
+	fread(timing, sizeof(*timing), sample_count, fp);
+
+	pru_write_bit_timing(pru, timing, sample_count);
+
+        pru_stop_motor(pru);
+	free(timing);
+
+	return 0;
+}
+
