@@ -600,9 +600,9 @@ fnWrite_Track:
         //   Could be tweaked!
         //ldi  write_track.delay_timer.w0, #0x4b40
         //ldi  write_track.delay_timer.w2, #0x004c
-        //   500ms spin up!
-        ldi  write_track.delay_timer.w0, #0xf080
-        ldi  write_track.delay_timer.w2, #0x02fa
+        //   1000ms spin up!
+        ldi  write_track.delay_timer.w0, #0xe100
+        ldi  write_track.delay_timer.w2, #0x05d5
 write_track_spin_up:
         dec  write_track.delay_timer
         qbne write_track_spin_up, write_track.delay_timer, #0
@@ -615,7 +615,7 @@ write_track_spin_up:
         //                 =            Sum Total  = 12056 bytes = 0x2f18
         rclr write_track.dword_index
         //ldi  write_track.dword_count, #0x0bc6 // 0x2f18/4 = 3014 dwords
-        ldi  write_track.dword_count, #0x3000 //#8 // 0x2f18/4 = 3014 dwords
+        ldi  write_track.dword_count, #20//#0x3000 //#8 // 0x2f18/4 = 3014 dwords
 
 write_track_get_byte:
         lbbo write_track.dword, GLOBAL.sharedMem, write_track.dword_index, 4    // 15ns
