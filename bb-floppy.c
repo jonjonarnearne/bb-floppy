@@ -114,9 +114,11 @@ void decode_mfm_sector(unsigned char *buf, int mfm_sector_len)
         //printf("Sector info: 0x%08x\n", info); 
 	//printf("Size of sector: 0x%x\n", sizeof(struct mfm_sector));
         printf("Odd: 0x%08x | Even: 0x%08x\n", sector->odd_info, sector->even_info);
-	printf("0x%08x: Sector magic: 0x%02x, number: %u - until end 0x%u\n",
+	printf("0x%08x: Format magic: 0x%02x, Cylinder Number: %u, Head: %s, sector_number: %u - until end 0x%u\n",
                         info,
                         (info & 0xff000000) >> 24,
+                        ((info & 0x00ff0000) >> 16) >> 2,
+                        (((info & 0x00ff0000) >> 16) & 0x1) ? "LOWER" : "UPPER",
                         (info & 0x0000ff00) >> 8,
                         (info & 0x000000ff));
         return;
@@ -147,7 +149,7 @@ int main(int argc, char **argv)
 	int mfm_sector_len = 0x1900;
         unsigned int * volatile counter;
 	unsigned int * volatile read_len;
-        unsigned int mfm_sector_count = 12, c = 0;
+        unsigned int mfm_sector_count = 11, c = 0; // DD = 11 sectors, HD = 22
 	unsigned char *track_buf, *mfm_sector_buf;
        
         track_buf = malloc(mfm_sector_len * mfm_sector_count);
@@ -211,8 +213,6 @@ int main(int argc, char **argv)
                         if (mfm_sector_count == c) {
                                 printf("Got %d mfm track(s)!\n", mfm_sector_count);
                                 ram[0] = 0xff;
-                                //mfm_sector_buf = track_buf;
-                                //c = 0;
                         }
                 }
         }
