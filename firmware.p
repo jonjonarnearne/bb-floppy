@@ -614,8 +614,7 @@ write_track_spin_up:
         //                 =                Total  = 1096 bytes * 11 sectors
         //                 =            Sum Total  = 12056 bytes = 0x2f18
         rclr write_track.dword_index
-        //ldi  write_track.dword_count, #0x0bc6 // 0x2f18/4 = 3014 dwords
-        ldi  write_track.dword_count, #20//#0x3000 //#8 // 0x2f18/4 = 3014 dwords
+        ldi  write_track.dword_count, #0x2ec4 // Write exactly 0x2ec0 bytes = 11 sectors of 0x440 = 1088
 
 write_track_get_byte:
         lbbo write_track.dword, GLOBAL.sharedMem, write_track.dword_index, 4    // 15ns
@@ -676,7 +675,7 @@ write_track_0_delay:
 write_track_epilogue:
         set  PIN_WRITE_GATE
 
-        // Must wait 650us before stopping motor aften PIN_WRITE_GATE == FALSE
+        // Must wait 650us before stopping motor after PIN_WRITE_GATE == FALSE
         ldi  write_track.delay_timer.w0, #65000
         ldi  write_track.delay_timer.w2, #0
 write_track_spin_down:

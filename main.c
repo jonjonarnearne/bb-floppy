@@ -375,12 +375,16 @@ int init_read_track(int argc, char ** argv)
 int init_read_sector(int argc, char ** argv)
 {
         int sector_info;
+	uint8_t data[512] = {0};
+	memset(pru->shared_ram, 0x00, 0x3000);
+
 	pru_start_motor(pru);
 	pru_read_sector(pru);
 	pru_stop_motor(pru);
 
         hexdump(pru->shared_ram, 16);
-	sector_info = decode_mfm_sector(pru->shared_ram, MFM_TRACK_LEN, NULL);
+
+	sector_info = decode_mfm_sector(pru->shared_ram, MFM_TRACK_LEN, data);
 	print_sector_info(sector_info);
 
 	return 0;
@@ -406,26 +410,19 @@ static void set_mfm_clock(void * data, size_t len)
 {
 	unsigned int *sector = data;
         int dword, bit;
-        uint8_t this_bit, last_bit;
+        unsigned int this_bit, last_bit;
 
         this_bit = sector[1] & 1;
 
         // The first two dwords are the sector markers
         for(dword = 2; dword < (len / 4); dword++) {
-                printf("dword[%d]: 0x%08x\n", dword, sector[dword]);
-                for(bit = 31; bit >= 0; bit--)
-                        printf("%d ", (sector[dword] & (1 << bit)) >> bit);
-
-                printf("\n");
                 for(bit = 31; bit >= 1; bit -= 2) {
                         last_bit = this_bit;
-                        this_bit = sector[dword] & (1 << (bit - 1));
-                        printf("%d ", this_bit >> (bit - 1));
+                        this_bit = (sector[dword] & (1 << (bit - 1)));
                         if (!(last_bit | this_bit))
                                 sector[dword] |= (1 << bit);
 
                 }
-                printf("\n");
         }
 }
 
@@ -447,101 +444,30 @@ int init_write_track(int argc, char ** argv)
 	int i;
 	uint8_t data[512] = {0};
 	uint32_t *sector;
-	unsigned char *track = malloc(0x3200); //12800 bytes - 1 raw track
+	unsigned char *track = malloc(0x3000); //12800 bytes - 1 raw track
 	if (!track) return -1;
 
-	memset(track, 0xaa, 0x3200);
-	sector = (uint32_t *)track;
-
-        sector = (uint32_t *)(track);
-        sector[0] = 0xaaaaaaaa;
-        sector[1] = 0x44894489; // Correct endian
-        // Sector 0 - RM 11 - HEAD 0 TRACK 0
-        //sector[2] = 0x552aaaa5;
-        //sector[3] = 0x552aaaa9;
-        // Sector 1 - RM 10 - HEAD 0 TRACK 0
-        sector[2] = 0x552aaaa5;
-        sector[3] = 0x552aa92a;
-        decode_mfm_sector(track + 8, 1080, NULL);
-
-	for(i=1; i<2; i++) {
+	memset(track, 0xaa, 0x3000);
+	for(i=0; i<11; i++) {
 		sector = (uint32_t *)(track + (RAW_MFM_SECTOR_SIZE * i));
-		sector[0] = 0xaaaaaaaa;
 		sector[1] = 0x44894489; // Correct endian
 		//sector[1] = 0x89448944;
 		encode_mfm_sector(i, (11-i), 0, PRU_HEAD_UPPER, data, &sector[2]);
-                //set_mfm_clock(sector, RAW_MFM_SECTOR_SIZE);
-                set_mfm_clock(sector, 16);
+		sector[RAW_MFM_SECTOR_SIZE/4] = 0x00000000;
+                set_mfm_clock(sector, RAW_MFM_SECTOR_SIZE + 4);
 	}
 
-	for (i=0; i<2; i++) {
-                printf("%d:\n", i);
+	for (i=0; i<11; i++) {
 		hexdump(track + (i * RAW_MFM_SECTOR_SIZE), 16);
-		//decode_mfm_sector(track + 8 + (RAW_MFM_SECTOR_SIZE * i), 1080, data);
+		decode_mfm_sector(track + 8 + (RAW_MFM_SECTOR_SIZE * i), 1080, data);
 	}
 
-#if 0
-           a    a    a    a
-        1010 1010 1010 1010
-           4    4    8    9
-        0100 0100 1000 1001
-           4    4    8    9
-        0100 0100 1000 1001
-
-        FF TT SS SG = 0xff - TrackNum - SecNum - SecRemain || 11 = 0x0b = 1011
-        Track 0 , Sec 0, Rem 11
-        0xff0000b
-           f    f    0    0    0    0    0    b
-        1111 1111 0000 0000 0000 0000 0000 1011
-        // ODD BITS
-           5    5    2    a    a    a    a    5
-        0101 0101 0010 1010 1010 1010 1010 0101
-        // Even BITS
-           5    5    2    a    a    a    a    9
-        0101 0101 0010 1010 1010 1010 1010 1001
-
-        FF TT SS SG = 0xff - TrackNum - SecNum - SecRemain || 11 = 0x0b = 1011
-        Track 0 , Sec 1, Rem 10
-        0xff0000b
-           f    f    0    0    0    1    0    b
-        1111 1111 0000 0000 0000 0001 0000 1010
-        // ODD BITS
-           5    5    2    a    a    a    a    5
-        0101 0101 0010 1010 1010 1010 1010 0101
-        // Even BITS
-           5    5    2    a    a    9    2    a
-        0101 0101 0010 1010 1010 1001 0010 1010
-       
-	for(i=0; i<1; i++) {
-		sector = (uint32_t *)(track + (RAW_MFM_SECTOR_SIZE * i));
-		sector[0] = 0xaaaaaaaa;
-		sector[1] = 0x44894489; // Correct endian
-		//sector[1] = 0x89448944;
-		encode_mfm_sector(i, (11-i), 0, PRU_HEAD_UPPER, data, &sector[2]);
-                set_mfm_clock(sector, RAW_MFM_SECTOR_SIZE);
-	}
-
-	for (i=0; i<1; i++) {
-		hexdump(track + (i * RAW_MFM_SECTOR_SIZE), 16);
-		//decode_mfm_sector(track + 8 + (RAW_MFM_SECTOR_SIZE * i), 1080, data);
-	}
-#endif
-	//decode_track(track + 8, NULL, NULL);
-
-	//hexdump(track, 16);
-        //memset(track, 0xaa, 0x3000);
 	memcpy(pru->shared_ram, track, 0x3000);
 	free(track);
 
-	//pru_write_track(pru, track);
-        printf("Done!\n\n");
-
-	return 0;
-
-	pru_start_motor(pru);
-	pru_erase_track(pru);
 	pru_write_track(pru, track);
-	pru_stop_motor(pru);
+
+        printf("Done!\n\n");
 
 	return 0;
 }
