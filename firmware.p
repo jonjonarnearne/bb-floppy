@@ -793,11 +793,13 @@ fnGet_Erase:
         jmp  write_track.ret_addr                                               //  5ns
 .leave write_track_scope
 
+#define BREAK_ON_IDX_LOW 0
 .struct Read_Bit_Timing
+        .u8   flags
+        .u8   unused
         .u16  timer
         .u16  ram_offset        // Position of write pointer
         .u16  ret_addr
-        .u16  unused
         .u32  sample_count      // Number of samples to read
         .u32  total_time
         .u32  target_time
@@ -809,6 +811,7 @@ fnRead_Bit_Timing:
 
         rclr read_bit_timing.total_time
         rclr read_bit_timing.ram_offset
+        clr  read_bit_timing.flags, BREAK_ON_IDX_LOW
 
         // Read for 240.000.012 ns ~ 240.000us = 1.2revolutions.
         // 240.000.012/30 = 8.000.000 = 0x007a.1200
@@ -884,12 +887,22 @@ read_bit_timing_store:
         and  read_bit_timing.ram_offset, read_bit_timing.ram_offset, read_bit_timing.timer
 
 read_bit_timing_skip_interrupt:
+        qbbc read_bit_timing_index_low, PIN_INDEX
+
+        set  read_bit_timing.flags, BREAK_ON_IDX_LOW
+        jmp  skip_read_bit_timing_index_low
+
+read_bit_timing_index_low:
+        qbbs read_bit_timing_done, read_bit_timing.flags, BREAK_ON_IDX_LOW
+skip_read_bit_timing_index_low:
+
         // Break if we have exhausted our memory
         qbeq read_bit_timing_done, read_bit_timing.sample_count, #0
 
         // Get next bit-time, while total_time < target_time
-        qblt read_bit_timing_get_next_bit, read_bit_timing.target_time, \
-                                          read_bit_timing.total_time
+        //qblt read_bit_timing_get_next_bit, read_bit_timing.target_time, \
+        //                                  read_bit_timing.total_time
+        jmp  read_bit_timing_get_next_bit
         
 read_bit_timing_done:
         sbbo read_bit_timing.total_time, GLOBAL.pruMem, \

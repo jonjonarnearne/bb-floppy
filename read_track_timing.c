@@ -144,9 +144,80 @@ static int find_std_sector_headers(const uint16_t *timing, int sample_count,
 	return header_count;
 }
 
+static void measure_samples(uint16_t * samples, int sample_count)
+{
+        int i;
+        int brackets[9] = {0};
+        int bracket_count[9] = {0};
+
+        for(i=0; i<sample_count; i++) {
+                if (samples[i] < 107) {
+                        brackets[0] += samples[i];
+                        bracket_count[0]++;
+                } else if (samples[i] < 115) {
+                        brackets[1] += samples[i];
+                        bracket_count[1]++;
+                } else if (samples[i] < 140) {
+                        brackets[2] += samples[i];
+                        bracket_count[2]++;
+                } else if (samples[i] < 175) {
+                        brackets[3] += samples[i];
+                        bracket_count[3]++;
+                } else if (samples[i] < 185) {
+                        brackets[4] += samples[i];
+                        bracket_count[4]++;
+                } else if (samples[i] < 200) {
+                        brackets[5] += samples[i];
+                        bracket_count[5]++;
+                } else if (samples[i] < 235) {
+                        brackets[6] += samples[i];
+                        bracket_count[6]++;
+                } else if (samples[i] < 255) {
+                        brackets[7] += samples[i];
+                        bracket_count[7]++;
+                } else {
+                        brackets[8] += samples[i];
+                        bracket_count[8]++;
+                }
+
+        }
+        printf("Short [01] --\n");
+        printf("Bracket 0 (<107): %d samples, avg: %f\n", bracket_count[0],
+                                (float)brackets[0]/(float)bracket_count[0]);
+        printf("Bracket 1 (<115): %d samples, avg: %f\n", bracket_count[1],
+                                (float)brackets[1]/(float)bracket_count[1]);
+        printf("Bracket 2 (<140): %d samples, avg: %f\n", bracket_count[2],
+                                (float)brackets[2]/(float)bracket_count[2]);
+        printf("Total: %d samples\n", bracket_count[0]
+                                  + bracket_count[1]
+                                  + bracket_count[2]);
+
+        printf("\nMedium [001] --\n");
+        printf("Bracket 3 (<175): %d samples, avg: %f\n", bracket_count[3],
+                                (float)brackets[3]/(float)bracket_count[3]);
+        printf("Bracket 4 (<185): %d samples, avg: %f\n", bracket_count[4],
+                                (float)brackets[4]/(float)bracket_count[4]);
+        printf("Bracket 5 (<200): %d samples, avg: %f\n", bracket_count[5],
+                                (float)brackets[5]/(float)bracket_count[5]);
+        printf("Total: %d samples\n", bracket_count[3]
+                                  + bracket_count[4]
+                                  + bracket_count[5]);
+
+        printf("\nLong [0001] --\n");
+        printf("Bracket 6 (<235): %d samples, avg: %f\n", bracket_count[6],
+                                (float)brackets[6]/(float)bracket_count[6]);
+        printf("Bracket 7 (<255): %d samples, avg: %f\n", bracket_count[7],
+                                (float)brackets[7]/(float)bracket_count[7]);
+        printf("Bracket 8 (----): %d samples, avg: %f\n", bracket_count[8],
+                                (float)brackets[8]/(float)bracket_count[8]);
+        printf("Total: %d samples\n", bracket_count[6]
+                                  + bracket_count[7]
+                                  + bracket_count[8]);
+}
+
 int read_track_timing(int argc, char ** argv)
 {
-	int rc, i, opt, sample_count;
+	int rc, i, opt, sample_count, measure = 0;
 	char *filename = NULL;
 	FILE *fp;
         uint16_t *timing = NULL;
@@ -159,10 +230,13 @@ int read_track_timing(int argc, char ** argv)
                 return 0;
         }
 
-	while((opt = getopt(argc, argv, "-l")) != -1) {
+	while((opt = getopt(argc, argv, "-lM")) != -1) {
 		switch(opt) {
 		case 'l':
 			track_side = PRU_HEAD_LOWER;
+			break;
+		case 'M':
+			measure = 1;
 			break;
 		case 1:
 			// If you specify a filename,
@@ -178,6 +252,10 @@ int read_track_timing(int argc, char ** argv)
         pru_stop_motor(pru);
 
 	printf("\tGot %d samples\n", sample_count);
+
+        if (measure) {
+                measure_samples(timing, sample_count);
+        }
 
 	rc = find_std_sector_headers(timing, sample_count, header, 11);
 	printf("got %d headers\n", rc);
@@ -197,6 +275,7 @@ int read_track_timing(int argc, char ** argv)
 			h++;
 		}
 	}
+
 
 	if (filename) {
 		fp = fopen(filename, "w");
