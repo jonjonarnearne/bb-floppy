@@ -1,5 +1,8 @@
 #ifndef PRU_SETUP_H
 #define PRU_SETUP_H
+
+#define MFM_TRACK_LEN	 0x1900 //1080 //0x1900
+
 enum pru_head_dir {
 	PRU_HEAD_INC,
 	PRU_HEAD_DEC,

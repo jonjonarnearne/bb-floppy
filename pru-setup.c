@@ -151,6 +151,8 @@ void pru_read_sector(struct pru * pru)
 	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
         if (!pru->running) return;
 
+        // IMPORTANT: SET ARGUMENT BEFORE WE SET THE COMMAND!
+	intf->argument = MFM_TRACK_LEN;
 	intf->command = COMMAND_READ_SECTOR;
         prussdrv_pru_wait_event(PRU_EVTOUT_0);
         prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);

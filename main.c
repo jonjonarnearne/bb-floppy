@@ -6,6 +6,7 @@
 #include <signal.h>
 #include <endian.h>
 
+#include "arm-interface.h"
 #include "pru-setup.h"
 
 void hexdump(const void *b, size_t len)
@@ -84,6 +85,16 @@ struct mfm_sector {
         unsigned char odd_data[512];
         unsigned char even_data[512];
 } __attribute__((packed));
+
+#define print_sector_info(info) do { \
+	printf("0x%08x: Format magic: 0x%02x, Cylinder Number: %u, Head: %s, sector_number: %2u - until end 0x%u\n", \
+                        info, \
+                        (info & 0xff000000) >> 24, \
+                        ((info & 0x00ff0000) >> 16) >> 1, \
+                        (((info & 0x00ff0000) >> 16) & 0x1) ? "LOWER" : "UPPER", \
+                        (info & 0x0000ff00) >> 8, \
+                        (info & 0x000000ff)); \
+} while(0)
 
 unsigned int decode_mfm_sector(unsigned char *buf, int mfm_sector_len, uint8_t *data_buf)
 {
@@ -187,11 +198,13 @@ void decode_track(unsigned char *buf, int mfm_sector_len, int mfm_sector_count)
         for (i=0; i<mfm_sector_count; i++) {
                 info = decode_mfm_sector(buf, mfm_sector_len, b);
 		sector = (info >> 8);
+		printf("%d -",sector);
 		memcpy(data_buf + (sector * 512), b, 512);
                 buf += mfm_sector_len;
         }
+	printf("\n");
 
-	hexdump(data_buf, 512*mfm_sector_count);
+	//hexdump(data_buf, 512*mfm_sector_count);
 	free(data_buf);
 }
 
@@ -202,11 +215,11 @@ void read_track(unsigned char * track)
 	unsigned char * sector = track;
 	sector = track;
 	for (i = 0; i < 11; i++) {
-		// The firmware is hardcoded to read 0x1900 bytes...
+		// The firmware is hardcoded to read MFM_TRACK_LEN bytes...
 		// We only read one sector!
 	        pru_read_sector(pru);
-		memcpy(sector, pru->shared_ram, 0x1900);
-		sector += 0x1900;
+		memcpy(sector, pru->shared_ram, MFM_TRACK_LEN);
+		sector += MFM_TRACK_LEN;
 	}
 }
 
@@ -219,19 +232,42 @@ int init_test(int argc, char ** argv)
 
 int init_read(int argc, char ** argv)
 {
-	unsigned char * track = malloc(0x1900 * 11);
+	int i;
+	unsigned char * track = malloc(MFM_TRACK_LEN * 11);
 	if (!track) {
 		fprintf(stderr, "Failed to alloc memory!\n");
 		return -1;
 	}
 
         pru_start_motor(pru);
-	read_track(track);	
+	pru_reset_drive(pru);
+        pru_set_head_dir(pru, PRU_HEAD_INC);
+
+	for (i=0; i<10; i++) {
+		read_track(track);	
+		printf("\nTrack: %d\n", i);
+		decode_track(track, MFM_TRACK_LEN, 11);
+		if (i < 79) pru_step_head(pru, 1);
+	}
         pru_stop_motor(pru);
-
-	decode_track(track, 0x1900, 11);
-
 	free(track);
+	return 0;
+}
+
+int init_read_sector(int argc, char ** argv)
+{
+	unsigned int info;
+	uint8_t data[512];
+
+	pru_start_motor(pru);
+	pru_read_sector(pru);
+	info = decode_mfm_sector(pru->shared_ram, MFM_TRACK_LEN, data);
+	print_sector_info(info);
+	//hexdump(pru->shared_ram + 1084, 12);
+
+	pru_stop_motor(pru);
+
+
 	return 0;
 }
 
@@ -246,7 +282,7 @@ int init_identify(int argc, char ** argv)
 
         pru_start_motor(pru);
         pru_read_sector(pru);
-	sector_info = decode_mfm_sector(pru->shared_ram, 0x1900, NULL);
+	sector_info = decode_mfm_sector(pru->shared_ram, MFM_TRACK_LEN, NULL);
 	cur_cyl = ((sector_info & 0x00ff0000) >> 16) >> 1;
         
         if (cur_cyl != target_cyl) {
@@ -280,6 +316,7 @@ static const struct modes {
 } modes[] = {
 	{ "identify", "print name of disk, and exit", init_identify },
 	{ "read", "read entire disk to file", init_read },
+	{ "read_sector", "read and dump single sector", init_read_sector },
 	{ "test", "test the motor control, one second test", init_test },
 	{ "reset", "Reset head to cylinder 0", reset_drive },
 	{ NULL, NULL }
@@ -317,7 +354,7 @@ int main(int argc, char **argv)
 	}
 
 	while(m->name) {
-		if (!strncmp(m->name, argv[1], strlen(m->name)))
+		if (!strncmp(argv[1], m->name, strlen(argv[1])))
 			break;
 		m++;
 	}
@@ -344,7 +381,7 @@ int main(int argc, char **argv)
 
 #if 0
         //FILE *fp;
-	int mfm_sector_len = 0x1900;
+	int mfm_sector_len = MFM_TRACK_LEN;
         unsigned int * volatile counter;
 	unsigned int * volatile read_len;
         unsigned int mfm_sector_count = 11, c = 0; // DD = 11 sectors, HD = 22

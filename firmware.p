@@ -24,7 +24,6 @@
 #define PIN_UNUSED              r31.t14 // P8.16
 
 #define SYNC_WORD               0x4489
-#define SECTOR_LEN_WORD         0x1900
 
 .macro  rclr
 .mparam reg
@@ -254,7 +253,8 @@ fnRead_Sector:
         rclr read_sector.dword_count
         rclr read_sector.cur_dword
         rclr read_sector.ram_offset
-        ldi  read_sector.sector_len, SECTOR_LEN_WORD
+        //ldi  read_sector.sector_len, MFM_TRACK_LEN
+        rcp  read_sector.sector_len, interface.argument
         lsr  read_sector.sector_len, read_sector.sector_len, #2  // sector_len / 4 == Convert from bytes to DWORDS
 
 rs_time_to_lo:
