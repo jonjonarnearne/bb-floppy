@@ -1297,6 +1297,7 @@ read_timing_wait_index_high:
 read_timing_wait_index_falling:
         M_CHECK_ABORT
         qbbs read_timing_wait_index_falling, PIN_INDEX
+        // PIN_INDEX is now LOW - We begin read
 
 read_timing_LOOP:
         rclr read_timing.timer
@@ -1356,16 +1357,18 @@ read_timing_wrong_offset:
 read_timing_check_index_pin:
         qbbc read_timing_index_low, PIN_INDEX
 
+        // PIN INDEX is HIGH, SET break flag.
         set  read_timing.flags, BREAK_ON_IDX_LOW
         jmp  read_timing_index_not_low
 
 read_timing_index_low:
         nop0 r0, r0, r0
         nop0 r0, r0, r0
-        // If index just fell down, break!
+        // PIN_INDEX is LOW, and break flag is set GOTO BREAK!
         qbbs read_timing_BREAK_LOOP, read_timing.flags, BREAK_ON_IDX_LOW
 
 read_timing_index_not_low:
+        // Waste some cycles to make this whole block take 300ns
         ldi read_timing.timer, #21
 read_timing_low_wait:
         dec read_timing.timer

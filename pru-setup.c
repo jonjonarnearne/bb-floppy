@@ -639,6 +639,7 @@ int pru_read_timing(struct pru * pru, uint16_t ** data)
                                 source -= 0x1000/sizeof(*source);
 
                 } else if (intf->command == (COMMAND_READ_TIMING & 0x7f)) {
+			// The drive is done reading
                         break;
                 } else {
                         printf("Got wrong Ack: 0x%02x\n", intf->command);
@@ -663,7 +664,7 @@ int pru_read_timing(struct pru * pru, uint16_t ** data)
 
         rc = bb_list_flatten(buffer_list, *data, intf->read_count);
         if (rc) {
-                fprintf(stderr, "Another assertio failed!\n");
+                fprintf(stderr, "Another assertion failed!\n");
         }
         bb_list_free(buffer_list);
         buffer_list = NULL;

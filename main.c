@@ -788,7 +788,7 @@ int main(int argc, char **argv)
 
 	mod_argv = malloc(sizeof(char *) * mod_argc);
 	if (!mod_argv) {
-		fprintf(stderr, "fatal: Couldn't alloc memory form mod_argv\n");
+		fprintf(stderr, "fatal: Couldn't alloc memory for mod_argv\n");
 		exit(1);
 	}
 
