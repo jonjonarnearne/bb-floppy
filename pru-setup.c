@@ -270,11 +270,12 @@ void pru_read_raw_track(struct pru * pru, void * data, uint32_t len,
                         }
                         dest += 0x1000/sizeof(*dest);
                         len -= 0x1000;
+
                         if (++mul & 0x1)
                                 source += 0x1000/sizeof(*dest);
                         else
                                 source -= 0x1000/sizeof(*dest);
-                        printf("Read 0x1000\n");
+
                 } else if (intf->command == (COMMAND_READ_SECTOR & 0x7f)) {
                         break;
                 } else {
@@ -329,12 +330,12 @@ int pru_get_bit_timing(struct pru * pru, uint16_t ** data)
                         memcpy(dest, source, 0x1000);
                         dest += 0x1000/sizeof(*dest);
                         sample_count -= 0x1000/sizeof(*dest);
+
                         if (++mul & 0x1)
                                 source += 0x1000/sizeof(*dest);
                         else
                                 source -= 0x1000/sizeof(*dest);
 
-                        printf("Read 0x1000\n");
                 } else if (intf->command == (COMMAND_GET_BIT_TIMING & 0x7f)) {
                         break;
                 } else {
@@ -345,9 +346,11 @@ int pru_get_bit_timing(struct pru * pru, uint16_t ** data)
         if (sample_count > 0) 
                 memcpy(dest, source, 0x1000);
 
+	/*
         printf("Sampled %d\n", intf->read_count);
         printf("Sampled %d ns\n", intf->read_count * 30);
         printf("Sampled %d us\n", intf->read_count * 30 / 1000);
+	*/
 
 	return (init_samp_count - intf->sync_word);
 }

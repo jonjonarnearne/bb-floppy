@@ -706,8 +706,72 @@ int reset_drive(int argc, char ** argv)
 int read_timing(int argc, char ** argv)
 {
 	FILE *fp;
+	uint8_t data[0xff];
+        uint16_t *timing;
+	int sample_count, i, e;
+
+	memset(data, 0x00, 0xff);
+
+	if (argc != 2) {
+		usage();
+		printf("You must give a filename to a timing file\n");
+		return -1;	
+	}
+
+        pru_start_motor(pru);
+	pru_reset_drive(pru);
+	for (i=0; i < 80; i++) {
+		pru_set_head_side(pru, PRU_HEAD_UPPER);
+		printf("Read track %d - UPPER\n", i);
+		sample_count = pru_get_bit_timing(pru, &timing);
+		if (!sample_count) {
+			fprintf(stderr, "Got zero samples\n");
+			break;
+		}
+		printf("\tGot %d samples\n", sample_count);
+		for (e=0; e < sample_count; e++) {
+			if (timing[e] > 0xff) {
+				printf("\t[%d] - Found > 0xff: %d\n", e, timing[e]);
+				continue;
+			}
+			data[timing[e]]++;
+		}
+		free(timing);
+
+		pru_set_head_side(pru, PRU_HEAD_LOWER);
+		printf("Read track %d - LOWER\n", i);
+		sample_count = pru_get_bit_timing(pru, &timing);
+		if (!sample_count) {
+			fprintf(stderr, "Got zero samples\n");
+			break;
+		}
+		printf("\tGot %d samples\n", sample_count);
+		for (e=0; e < sample_count; e++) {
+			if (timing[e] > 0xff) {
+				printf("\t[%d] - Found > 0xff: %d\n", e, timing[e]);
+				continue;
+			}
+			data[timing[e]]++;
+		}
+		free(timing);
+	}
+
+        pru_stop_motor(pru);
+
+	fp = fopen(argv[1], "w");
+	fwrite(data, sizeof(*data), 0xff, fp);
+	fclose(fp);
+
+        return 0;
+}
+
+int read_track_timing(int argc, char ** argv)
+{
+	FILE *fp;
         uint16_t *timing;
 	int sample_count, i;
+	uint32_t info, data[3] = {0,0,0};
+
 
 	if (argc != 2) {
 		usage();
@@ -719,20 +783,74 @@ int read_timing(int argc, char ** argv)
 	sample_count = pru_get_bit_timing(pru, &timing);
         pru_stop_motor(pru);
 
-	printf("Got %d samples\n", sample_count);
+	printf("\tGot %d samples\n", sample_count);
 	for (i=0; i < sample_count; i++) {
 		if (timing[i] > 0xff)
-			printf("[%d] - Found > 0xff: %d\n", i, timing[i]);
-		if (timing[i] < 105)
-			printf("[%d] - Found < 105: %d\n", i, timing[i]);
+			printf("\t[%d] - Found > 0xff: %d\n", i, timing[i]);
 
+		if (timing[i] > 230 ) {
+			data[2] <<= 1;
+			data[2] |= (data[1] & 0x80000000) >> 31;
+			data[1] <<= 1;
+			data[1] |= (data[0] & 0x80000000) >> 31;
+			data[0] <<= 1;
+			if (data[2] == 0x44894489) {
+				printf("FOUND SYNC 0 @ %d\n", i);
+				info = (data[1] & 0x55555555);
+				info <<= 1;
+				info |= (data[0] & 0x55555555);
+				print_sector_info(htobe32(info));
+			}
+		}
+
+		if (timing[i] > 160) {
+			data[2] <<= 1;
+			data[2] |= (data[1] & 0x80000000) >> 31;
+			data[1] <<= 1;
+			data[1] |= (data[0] & 0x80000000) >> 31;
+			data[0] <<= 1;
+			if (data[2] == 0x44894489) {
+				printf("FOUND SYNC 1 @ %d\n", i);
+				info = (data[1] & 0x55555555);
+				info <<= 1;
+				info |= (data[0] & 0x55555555);
+				print_sector_info(htobe32(info));
+			}
+		}
+		
+		data[2] <<= 1;
+		data[2] |= (data[1] & 0x80000000) >> 31;
+		data[1] <<= 1;
+		data[1] |= (data[0] & 0x80000000) >> 31;
+		data[0] <<= 1;
+		if (data[2] == 0x44894489) {
+			printf("FOUND SYNC 2 @ %d\n", i);
+			info = (data[1] & 0x55555555);
+			info <<= 1;
+			info |= (data[0] & 0x55555555);
+			print_sector_info(htobe32(info));
+		}
+
+		data[2] <<= 1;
+		data[2] |= (data[1] & 0x80000000) >> 31;
+		data[1] <<= 1;
+		data[1] |= (data[0] & 0x80000000) >> 31;
+		data[0] <<= 1;
+		data[0] |= 1;
+		if (data[2] == 0x44894489) {
+			printf("FOUND SYNC 3 @ %d\n", i);
+			info = (data[1] & 0x55555555);
+			info <<= 1;
+			info |= (data[0] & 0x55555555);
+			print_sector_info(htobe32(info));
+		}
 	}
 
 	fp = fopen(argv[1], "w");
 	fwrite(timing, sizeof(*timing), sample_count, fp);
 	fclose(fp);
 
-        free(timing);
+	free(timing);
         return 0;
 }
 
@@ -754,7 +872,8 @@ static const struct modes {
 	{ "find_sync", "See if we find any sync marker", find_sync },
 	{ "reset", "Reset head to cylinder 0", reset_drive },
 	{ "step_head", "Move head [n] steps in [dir]", init_step_head },
-	{ "read_timing", "Get a list of bit timings", read_timing },
+	{ "read_timing", "get timing info from entire disk", read_timing },
+	{ "read_track_timing", "Get a list of bit timings", read_track_timing },
 	{ NULL, NULL }
 };
 
