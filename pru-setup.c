@@ -17,8 +17,8 @@ extern unsigned int firmware_data[]	asm("_binary_firmware_bin_start");
 struct pru * pru_setup(void)
 {
 	int rc;
-	char * volatile ram;			// 8Kb // 0x2000 // 8192
-	char * volatile shared_ram;		// 12Kb	// 0x3000 // 12288
+	unsigned char * volatile ram;			// 8Kb // 0x2000 // 8192
+	unsigned char * volatile shared_ram;		// 12Kb	// 0x3000 // 12288
 
 	int firmware_size = (int)(void *)_firmware_size;
 
@@ -152,6 +152,7 @@ void pru_read_sector(struct pru * pru)
 {
 	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
         if (!pru->running) return;
+
 	intf->command = COMMAND_READ_SECTOR;
         prussdrv_pru_wait_event(PRU_EVTOUT_0);
         prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
@@ -161,3 +162,34 @@ void pru_read_sector(struct pru * pru)
 	return;
 }
 
+void pru_set_head_dir(struct pru * pru, enum pru_head_dir dir)
+{
+	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
+        if (!pru->running) return;
+
+	intf->command = COMMAND_SET_HEAD_DIR;
+	intf->argument = (dir == PRU_HEAD_INC) ? 1 : 0;
+        prussdrv_pru_wait_event(PRU_EVTOUT_0);
+        prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
+	if (intf->command != (COMMAND_SET_HEAD_DIR & 0x7f))
+                printf("Got wrong Ack: 0x%02x\n", intf->command);
+
+	return;
+}
+
+void pru_step_head(struct pru * pru, uint16_t count)
+{
+	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
+        if (!pru->running) return;
+
+	printf("Request to step: %d times\n", count);
+	intf->command = COMMAND_STEP_HEAD;
+	if (count > 80) count = 80;
+	intf->argument = count;
+        prussdrv_pru_wait_event(PRU_EVTOUT_0);
+        prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
+	if (intf->command != (COMMAND_STEP_HEAD & 0x7f))
+                printf("Got wrong Ack: 0x%02x\n", intf->command);
+
+	return;
+}

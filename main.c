@@ -77,15 +77,13 @@ struct mfm_sector {
         unsigned char even_data[512];
 } __attribute__((packed));
 
-void decode_mfm_sector(unsigned char *buf, int mfm_sector_len)
+unsigned int decode_mfm_sector(unsigned char *buf, int mfm_sector_len)
 {
         unsigned int info;
         int label[4];
         int head_chksum;
         int data_chksum;
         int chksum = 0L;
-	unsigned int *test;
-	int i;
         struct mfm_sector *sector = (struct mfm_sector *)buf;
 	/*
         hexdump(buf, 8);
@@ -155,7 +153,7 @@ void decode_mfm_sector(unsigned char *buf, int mfm_sector_len)
         data_chksum = ((sector->odd_d_chksum & MASK) << 1) | (sector->even_d_chksum & MASK);
         printf("Data Checksum: 0x%08x\n", data_chksum);
 
-        return;
+        return info;
 }
 
 void decode_track(unsigned char *buf, int mfm_sector_len, int mfm_sector_count)
@@ -168,19 +166,64 @@ void decode_track(unsigned char *buf, int mfm_sector_len, int mfm_sector_count)
 }
 
 
+static struct pru * pru;
 int init_test(int argc, char ** argv)
 {
 	printf("Test\n");
 	return 0;
 }
+
 int init_read(int argc, char ** argv)
 {
-	printf("Read\n");
+	int i;
+	unsigned char * sector;
+	unsigned char * buf = malloc(0x1900 * 11);
+	if (!buf) {
+		fprintf(stderr, "Failed to alloc memory!\n");
+		return -1;
+	}
+
+	sector = buf;
+	for (i = 0; i < 11; i++) {
+		// The firmware is hardcoded to read 0x1900 bytes...
+		// We only read one sector!
+	        pru_read_sector(pru);
+		memcpy(sector, pru->shared_ram, 0x1900);
+		sector += 0x1900;
+	}
+	sector = buf;
+	for (i = 0; i < 11; i++) {
+		decode_track(sector, 0x1900, 1);
+		sector += 0x1900;
+	}
+
+	free(buf);
 	return 0;
 }
+
 int init_identify(int argc, char ** argv)
 {
-	printf("Identify\n");
+	int block_num = 880;
+	int target_cyl = block_num / 22;
+	//int target_sector = block_num % 11;
+	//int target_head = (block_num % 22) / 11;
+	unsigned int sector_info;
+	int cur_cyl;
+	pru_read_sector(pru);
+	sector_info = decode_mfm_sector(pru->shared_ram, 0x1900);
+	cur_cyl = ((sector_info & 0x00ff0000) >> 16) >> 2;
+
+	/*
+	if (cur_cyl < target_cyl)
+		pru_set_head_dir(pru, PRU_HEAD_INC);
+	else
+		pru_set_head_dir(pru, PRU_HEAD_DEC);
+	*/
+	
+	pru_step_head(pru, abs(target_cyl - cur_cyl));
+	pru_read_sector(pru);
+	sector_info = decode_mfm_sector(pru->shared_ram, 0x1900);
+
 	return 0;
 }
 
@@ -211,7 +254,6 @@ void usage(void)
 
 }
 
-static struct pru * pru;
 static void int_handler(int sig)
 {
 	pru_exit(pru);
@@ -221,7 +263,6 @@ static void int_handler(int sig)
 
 int main(int argc, char **argv)
 {
-	int rc;
 	const struct modes *m = modes;
 
 	if (argc == 1) {
@@ -242,17 +283,13 @@ int main(int argc, char **argv)
 	}
 
 
-	m->init(argc - 1, argv + 1);
 	pru = pru_setup();
 	if (!pru)
 		exit(1);
 
         signal(SIGINT, int_handler);
 
-        pru_read_sector(pru);
-        // The firmware is hardcoded to read 0x1900 bytes...
-        // We only read one sector!
-        decode_track(pru->shared_ram, 0x1900, 1);
+	m->init(argc - 1, argv + 1);
 
 	pru_exit(pru);
 

@@ -41,6 +41,11 @@
         add reg, reg, #1
 .endm
 
+.macro  dec
+.mparam reg
+        sub reg, reg, #1
+.endm
+
 .macro  M_CHECK_ABORT
         lbbo interface.command, GLOBAL.pruMem, OFFSET(interface.command), \
                                                SIZE(interface.command)
@@ -81,6 +86,8 @@ WAIT_FOR_COMMAND:
         qbeq START_MOTOR, interface.command, COMMAND_START_MOTOR
         qbeq STOP_MOTOR, interface.command, COMMAND_STOP_MOTOR
         qbeq READ_SECTOR, interface.command, COMMAND_READ_SECTOR
+        qbeq SET_HEAD_DIR, interface.command, COMMAND_SET_HEAD_DIR
+        qbeq STEP_HEAD, interface.command, COMMAND_STEP_HEAD
 
         jmp  WAIT_FOR_COMMAND
 
@@ -112,6 +119,32 @@ STOP_MOTOR:
                                 SIZE(interface)
         mov  r31.b0, PRU0_ARM_INTERRUPT+16
         jmp  WAIT_FOR_COMMAND
+
+SET_HEAD_DIR:
+        clr  PIN_HEAD_DIR
+        qbeq head_dir_inc, interface.argument, #1
+        set  PIN_HEAD_DIR
+head_dir_inc:
+        and  interface.command, interface.command, 0x7f
+        sbbo interface.command, GLOBAL.pruMem, \
+                                OFFSET(interface.command), \
+                                SIZE(interface.command)
+
+        mov  r31.b0, PRU0_ARM_INTERRUPT+16
+        jmp  WAIT_FOR_COMMAND
+
+STEP_HEAD:
+        jal  STACK.ret_addr, fnStep_Head
+
+        and  interface.command, interface.command, 0x7f
+        sbbo interface.command, GLOBAL.pruMem, \
+                                OFFSET(interface.command), \
+                                SIZE(interface.command)
+
+        mov  r31.b0, PRU0_ARM_INTERRUPT+16
+        jmp  WAIT_FOR_COMMAND
+       
+        
 
 READ_SECTOR:
         clr  PIN_DRIVE_ENABLE_MOTOR
@@ -276,6 +309,56 @@ no_bits_remain:
         rcp  STACK.ret_addr, read_sector.ret_addr
         jmp  STACK.ret_addr
 .leave read_sector_scope
-        
 
+.struct Step_Head
+        .u8   step_count
+        .u8   unused
+        .u16  unused2
+        .u32  ret_addr
+        .u32  timer
+.ends
+.enter step_head_scope
+.assign Step_Head, r20, r22, step_head
+fnStep_Head:
+        rcp  step_head.ret_addr, STACK.ret_addr
+        lsl  step_head.step_count, interface.argument, #1 // argument * 2 = step_count
+
+        clr  PIN_DRIVE_ENABLE_MOTOR
+        clr  PIN_HEAD_DIR
+        
+        ldi  step_head.timer.w0, #800
+        ldi  step_head.timer.w2, #0x0000
+del8us:
+        dec  step_head.timer
+        qbne del8us, step_head.timer, #0
+
+        ldi  step_head.step_count, #4
+do:
+        clr  PIN_HEAD_STEP
+
+        // Min 0.8us = 800ns
+        ldi  step_head.timer.w0, #80
+        ldi  step_head.timer.w2, #0x0000
+del800ns:
+        dec  step_head.timer
+        qbne del800ns, step_head.timer, #0
+
+        set  PIN_HEAD_STEP
+
+        // Min 3ms = 3 000 000ns = 300 000 = 0x 00 04 93 e0
+        ldi  step_head.timer.w0, #0x93e0 // 3ms
+        ldi  step_head.timer.w2, #0x0004
+del3ms:
+        dec  step_head.timer
+        qbne del3ms, step_head.timer, #0
+
+        dec  step_head.step_count
+        qbne do, step_head.step_count, #0
+
+        //set  PIN_HEAD_DIR
+        set  PIN_DRIVE_ENABLE_MOTOR
+
+        rcp  STACK.ret_addr, step_head.ret_addr
+        jmp  STACK.ret_addr
+.leave step_head_scope
 

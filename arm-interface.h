@@ -11,8 +11,10 @@
 #define COMMAND_START_MOTOR_ACK (0x01)
 #define COMMAND_STOP_MOTOR      (0x02 | 0x80)
 #define COMMAND_STOP_MOTOR_ACK  (0x02)
-#define COMMAND_READ_SECTOR     (0x04 | 0x80)
-#define COMMAND_READ_SECTOR_ACK (0x04)
+#define COMMAND_READ_SECTOR     (0x03 | 0x80)
+#define COMMAND_READ_SECTOR_ACK (0x03)
+#define COMMAND_SET_HEAD_DIR    (0x04 | 0x80)
+#define COMMAND_STEP_HEAD       (0x05 | 0x80)
 
 #ifndef __GNUC__
 .struct ARM_IF
