@@ -152,7 +152,27 @@ void pru_read_sector(struct pru * pru)
         if (!pru->running) return;
 
         // IMPORTANT: SET ARGUMENT BEFORE WE SET THE COMMAND!
-	intf->argument = MFM_TRACK_LEN;
+        // The argument is number of dwords
+	intf->argument = 0x500 / 4; //1280
+	intf->command = COMMAND_READ_SECTOR;
+        prussdrv_pru_wait_event(PRU_EVTOUT_0);
+        prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
+	if (intf->command != (COMMAND_READ_SECTOR & 0x7f))
+                printf("Got wrong Ack: 0x%02x\n", intf->command);
+
+	return;
+}
+
+void pru_read_track(struct pru * pru)
+{
+	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
+        if (!pru->running) return;
+
+        // IMPORTANT: SET ARGUMENT BEFORE WE SET THE COMMAND!
+        // The argument is number of dwords
+        // 14 eq. just read the head. Wait for correct sector,
+        // then read entire track!
+	intf->argument = 14;
 	intf->command = COMMAND_READ_SECTOR;
         prussdrv_pru_wait_event(PRU_EVTOUT_0);
         prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
@@ -178,12 +198,27 @@ void pru_set_head_dir(struct pru * pru, enum pru_head_dir dir)
 	return;
 }
 
+void pru_set_head_side(struct pru * pru, enum pru_head_side side)
+{
+	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
+        if (!pru->running) return;
+
+        // IMPORTANT: SET ARGUMENT BEFORE WE SET THE COMMAND!
+	intf->argument = (side == PRU_HEAD_UPPER) ? 1 : 0;
+	intf->command = COMMAND_SET_HEAD_SIDE;
+        prussdrv_pru_wait_event(PRU_EVTOUT_0);
+        prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
+	if (intf->command != (COMMAND_SET_HEAD_SIDE & 0x7f))
+                printf("Got wrong Ack: 0x%02x\n", intf->command);
+
+	return;
+}
+
 void pru_step_head(struct pru * pru, uint16_t count)
 {
 	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
         if (!pru->running) return;
 
-	printf("Request to step: %d times\n", count);
 	if (count > 80) count = 80;
         // IMPORTANT: SET ARGUMENT BEFORE WE SET THE COMMAND!
 	intf->argument = count;

@@ -88,6 +88,7 @@ WAIT_FOR_COMMAND:
         qbeq STOP_MOTOR, interface.command, COMMAND_STOP_MOTOR
         qbeq READ_SECTOR, interface.command, COMMAND_READ_SECTOR
         qbeq SET_HEAD_DIR, interface.command, COMMAND_SET_HEAD_DIR
+        qbeq SET_HEAD_SIDE, interface.command, COMMAND_SET_HEAD_SIDE
         qbeq STEP_HEAD, interface.command, COMMAND_STEP_HEAD
         qbeq RESET_DRIVE, interface.command, COMMAND_RESET_DRIVE
 
@@ -127,6 +128,12 @@ SET_HEAD_DIR:
         set  PIN_HEAD_DIR
         jmp  SEND_ACK
 
+SET_HEAD_SIDE:
+        set  PIN_HEAD_SELECT
+        qbeq SEND_ACK, interface.argument, #1
+        clr  PIN_HEAD_SELECT
+        jmp  SEND_ACK
+
 STEP_HEAD:
         jal  STACK.ret_addr, fnStep_Head
         jmp  SEND_ACK
@@ -143,13 +150,16 @@ RESET_DRIVE:
         
 
 READ_SECTOR:
-        ldi  GLOBAL.sector_offset, #0
+        //  We might try to read an entire track here.
         jal  STACK.ret_addr, fnWait_For_Hi
         jal  STACK.ret_addr, fnWait_For_Lo
         jal  STACK.ret_addr, fnFind_Sync
         jal  STACK.ret_addr, fnRead_Sector
 
+        // if the GLOBAL.sector_offset is 0xff,
+        // we eighter has a checksum error, or are not reading the entire track
         qbeq SEND_ACK, GLOBAL.sector_offset, #0xff
+        // If the GLOBAL.sector_offset != SECT_OFST (11), keep looking
         qbne READ_SECTOR, GLOBAL.sector_offset, SECT_OFST
 
         jmp  SEND_ACK
@@ -246,7 +256,7 @@ found_sync:
         .u32  sector_len
 .ends
 .enter read_sector_scope
-.assign Read_Sector, r20, r24, read_sector
+.assign Read_Sector, r21, r25, read_sector
 fnRead_Sector:
         rcp  read_sector.ret_addr, STACK.ret_addr
 
@@ -254,13 +264,18 @@ fnRead_Sector:
         rclr read_sector.dword_count
         rclr read_sector.cur_dword
         rclr read_sector.ram_offset
-        ldi  read_sector.sector_len, 14 // 14 dwords is the mfm_sector head
-        //rcp  read_sector.sector_len, interface.argument
-        //lsr  read_sector.sector_len, read_sector.sector_len, #2  // sector_len / 4 == Convert from bytes to DWORDS
+
+        // If interface.argument is 14,
+        // we read the sector head.
+        // If sector head info says that we are on start of sectors,
+        // We read the entire track
+        // Else, just read the amount of dwords specified
+        rcp  read_sector.sector_len, interface.argument
 
 rs_time_to_lo:
-        rclr read_sector.timer
         jal  STACK.ret_addr, fnWait_For_Hi
+rs_time_to_lo_fast:
+        rclr read_sector.timer
 rs_timer:
         M_CHECK_ABORT
         inc  read_sector.timer
@@ -309,22 +324,28 @@ got_dword:
 no_bits_remain:
         qble rs_time_to_lo, read_sector.sector_len, read_sector.dword_count // dword_count <= sector_len
 
+        // Mark the sector read done,
+        // if we are not trying to read whole track!
+        ldi  GLOBAL.sector_offset, #0xff
         qbne read_sector_done, read_sector.sector_len, #14
-
+        // Exit this function here if have read more than the SECTOR_HEAD
+        
         // We have only read the head, now check if we should continue reading
         jal  STACK.ret_addr, fnGet_Sector_Offset
         // 0xff == chksum error
         qbeq read_sector_done, GLOBAL.sector_offset, #0xff
         qbne read_sector_done, GLOBAL.sector_offset, SECT_OFST
 
-        ldi read_sector.sector_len, #(0x3000/4) - 14
+        // Setup read counter to read rest of track
+        ldi  read_sector.sector_len, #(0x3000/4) - 14
+        // Now jump up to read rest of track
         jmp rs_time_to_lo
 
 read_sector_done:
         rcp  STACK.ret_addr, read_sector.ret_addr
         jmp  STACK.ret_addr
-.leave read_sector_scope
 
+// This is a helper function, so we keep scope of read_sector
 .struct MFM_HEADER
         .u32  odd_info
         .u32  even_info
@@ -393,15 +414,17 @@ fnGet_Sector_Offset:
         rclr GLOBAL.sector_offset
 
         qbeq chksum_match, mfm_header.odd_head_chksum, get_sector_offset.chksum
-        // This header is unreadable
+        // This header is unreadable -- We set OFFSET to 0xff for error
         ldi  GLOBAL.sector_offset, #0xff
         jmp  STACK.ret_addr
 
 chksum_match:
+        // set GLOBAL.sector_offset to the value of odd_info
         and  GLOBAL.sector_offset, mfm_header.odd_info, #0xff
         
         jmp  STACK.ret_addr
 .leave get_sector_offset_scope
+.leave read_sector_scope
 
 .struct Step_Head
         .u16  step_count

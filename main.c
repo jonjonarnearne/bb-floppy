@@ -87,7 +87,7 @@ struct mfm_sector {
 } __attribute__((packed));
 
 #define print_sector_info(info) do { \
-	printf("0x%08x: Format magic: 0x%02x, Cylinder Number: %u, Head: %s, sector_number: %2u - until end 0x%2d\n", \
+	printf("0x%08x: Format magic: 0x%02x, Cylinder Number: %u, Head: %s, sector_number: %2d - until end: %2d\n", \
                         info, \
                         (info & 0xff000000) >> 24, \
                         ((info & 0x00ff0000) >> 16) >> 1, \
@@ -104,55 +104,14 @@ unsigned int decode_mfm_sector(unsigned char *buf, int mfm_sector_len, uint8_t *
         unsigned int data_chksum;
         unsigned int chksum = 0L;
         struct mfm_sector *sector = (struct mfm_sector *)buf;
-	/*
-        hexdump(buf, 8);
-
-        printf("Odd: 0x%08x\n", odd);
-        bin_dump(buf[0]);
-        bin_dump(buf[1]);
-        bin_dump(buf[2]);
-        bin_dump(buf[3]);
-        printf("Even: 0x%08x\n", even);
-        bin_dump(buf[4]);
-        bin_dump(buf[5]);
-        bin_dump(buf[6]);
-        bin_dump(buf[7]);
-
-        printf("Format Odd: 0x%02x\n", buf[0]);
-        bin_dump(buf[0]);
-        bin_dump((buf[0] & 0x55) << 1);
-        printf("Format Even: 0x%02x\n", buf[4]);
-        bin_dump(buf[4]);
-        bin_dump(buf[4] & 0x55);
-        bin_dump((buf[4] & 0x55) | ((buf[0] & 0x55) << 1));
-	*/
 
         info = (sector->odd_info & 0x55555555);
         info <<= 1;
         info |= (sector->even_info & 0x55555555);
 
 
-        //printf("Sector info: 0x%08x\n", info); 
-	//printf("Size of sector: 0x%x\n", sizeof(struct mfm_sector));
-        //printf("Odd: 0x%08x | Even: 0x%08x\n", sector->odd_info, sector->even_info);
-	/*
-	printf("0x%08x: Format magic: 0x%02x, Cylinder Number: %u, Head: %s, sector_number: %2u - until end 0x%u\n",
-                        info,
-                        (info & 0xff000000) >> 24,
-                        ((info & 0x00ff0000) >> 16) >> 1,
-                        (((info & 0x00ff0000) >> 16) & 0x1) ? "LOWER" : "UPPER",
-                        (info & 0x0000ff00) >> 8,
-                        (info & 0x000000ff));
-	*/
-
-
-        //label[0] = ((sector->odd_label[0] & MASK) << 1) | (sector->even_label[0] & MASK);
-        //label[1] = ((sector->odd_label[1] & MASK) << 1) | (sector->even_label[1] & MASK);
-        //label[2] = ((sector->odd_label[2] & MASK) << 1) | (sector->even_label[2] & MASK);
-        //label[3] = ((sector->odd_label[3] & MASK) << 1) | (sector->even_label[3] & MASK);
-        //printf("Label: 0x%08x 0x%08x 0x%08x 0x%08x\n", label[0], label[1], label[2], label[3]);
-
-        head_chksum = ((sector->odd_h_chksum & MASK) << 1) | (sector->even_h_chksum & MASK);
+        head_chksum = ((sector->odd_h_chksum & MASK) << 1)
+                        | (sector->even_h_chksum & MASK);
         chksum ^= sector->odd_info;
         chksum ^= sector->even_info;
         chksum &= MASK;
@@ -181,46 +140,92 @@ unsigned int decode_mfm_sector(unsigned char *buf, int mfm_sector_len, uint8_t *
                 printf("Calculated Data Chksum: 0x%08x\n", chksum);
                 printf("Data Checksum: 0x%08x\n", data_chksum);
 	}
-	//hexdump(decoded_data, 512);
 
         return info;
 }
 
-void decode_track(unsigned char *buf, int mfm_sector_len, int mfm_sector_count)
-{
-        int i;
-	unsigned int info;
-	uint8_t sector;
-	unsigned char b[512];
-	unsigned char *data_buf = malloc(512 * mfm_sector_count);
-	if (!data_buf) return;
-
-        for (i=0; i<mfm_sector_count; i++) {
-                info = decode_mfm_sector(buf, mfm_sector_len, b);
-		sector = (info >> 8);
-		printf("%d -",sector);
-		memcpy(data_buf + (sector * 512), b, 512);
-                buf += mfm_sector_len;
-        }
-	printf("\n");
-
-	//hexdump(data_buf, 512*mfm_sector_count);
-	free(data_buf);
-}
-
 static struct pru * pru;
-void read_track(unsigned char * track)
+
+/* Call this after pru_read_track, to sync up the data.
+ * If we read an entire track,
+ * we might have to sync to the sync byte for successive sectors
+ */
+static void decode_track()
 {
-	int i;
-	unsigned char * sector = track;
-	sector = track;
-	for (i = 0; i < 11; i++) {
-		// The firmware is hardcoded to read MFM_TRACK_LEN bytes...
-		// We only read one sector!
-	        pru_read_sector(pru);
-		memcpy(sector, pru->shared_ram, MFM_TRACK_LEN);
-		sector += MFM_TRACK_LEN;
-	}
+	unsigned int info, i, e, shifts, dwords_len;
+        uint8_t * volatile ram;
+        uint32_t * volatile dwords;
+        uint32_t mask = 0;
+	uint8_t data[512];
+        uint8_t *sectors = malloc(1080 * 11);
+        if (!sectors) return;
+
+        ram = pru->shared_ram;
+
+        for (e = 0; e<11; e++) {
+                info = decode_mfm_sector(ram, 1080, data);
+                //print_sector_info(info);
+                memcpy(sectors + (1080 * ((info & 0xff00) >> 8)), ram, 1080);
+
+                if (e == 10) break;
+
+                ram += 1080;
+                dwords = (uint32_t * volatile)ram;
+
+                // Check if we can read the sync word,
+                // else we must shift the rest of ram left
+                mask = 0;
+                for(i=0; i<24; i++) {
+                        if (dwords[1] == 0x44894489)
+                                break;
+
+                        mask <<= 0x01;
+                        mask |= 0x01;
+
+                        dwords[0] <<= 1;
+                        dwords[0] |= (dwords[1] & 0x80000000) >> 31;
+
+                        dwords[1] <<= 1;
+                        dwords[1] |= (dwords[2] & 0x80000000) >> 31;
+
+                        dwords[2] <<= 1;
+                }
+                if (dwords[1] != 0x44894489) {
+                        // We try to correct up to 24 bits - then give up
+                        printf("Couldn't sync data. Exit\n");
+                        break;
+                }
+                if (mask) {
+                        // We had to shift, now shift rest of ram
+                        printf("%08x %08x\n", dwords[0], dwords[1]);
+                        shifts = i;
+                        printf("Shifted %d times!\n", shifts);
+                        printf("%02x - MASK\n", mask);
+                        printf("%08x\n", dwords[2]);
+                        mask <<= (32-i);
+                        printf("%02x - MASK\n", mask);
+                        dwords[2] |= (dwords[3] & mask) >> (32 - i);
+                        printf("%08x\n", dwords[2]);
+
+                        dwords += 3;
+                        dwords_len = (0x3000 - (1080 + 12)) / 4;
+        
+                        for(i=0; i<dwords_len; i++) {
+                                dwords[i] <<= shifts;
+                                if (i == (dwords_len-1)) break;
+                                dwords[i] |= (dwords[i+1] & mask) >> (32-shifts);
+                        }
+                        dwords -= 1;
+                }
+
+                ram += 8; // Skip the SYNC_WORD
+        }
+
+        for(e = 0; e < 11; e++) {
+                info = decode_mfm_sector(sectors + (1080 * e), 1080, data);
+                //print_sector_info(info);
+        }
+        free(sectors);
 }
 
 
@@ -243,10 +248,14 @@ int init_read(int argc, char ** argv)
 	pru_reset_drive(pru);
         pru_set_head_dir(pru, PRU_HEAD_INC);
 
-	for (i=0; i<10; i++) {
-		read_track(track);	
+	for (i=0; i<80; i++) {
 		printf("\nTrack: %d\n", i);
-		decode_track(track, MFM_TRACK_LEN, 11);
+                pru_set_head_side(pru, PRU_HEAD_UPPER);
+		pru_read_track(pru);	
+                decode_track();
+                pru_set_head_side(pru, PRU_HEAD_LOWER);
+		pru_read_track(pru);	
+                decode_track();
 		if (i < 79) pru_step_head(pru, 1);
 	}
         pru_stop_motor(pru);
@@ -254,170 +263,13 @@ int init_read(int argc, char ** argv)
 	return 0;
 }
 
-int init_read_sector(int argc, char ** argv)
+int init_read_track(int argc, char ** argv)
 {
-        FILE *fp;
-	unsigned int info, i, shifts, dwords_len;
-        uint8_t * volatile ram;
-        uint32_t * volatile dwords;
-        uint32_t mask = 0;
-	uint8_t data[512];
-        uint8_t *sectors = malloc(1080 * 11);
-        if (!sectors) return -1;
-
 	pru_start_motor(pru);
-	pru_read_sector(pru);
-	info = decode_mfm_sector(pru->shared_ram, MFM_TRACK_LEN, data);
-	print_sector_info(info);
-	//hexdump(data, 512);
+	pru_read_track(pru);
 	pru_stop_motor(pru);
 
-        ram = pru->shared_ram;
-
-        memcpy(sectors, ram, 1080);
-        ram += 1080;
-        dwords = (uint32_t * volatile)ram;
-
-        printf("%08x\n", dwords[2]);
-        for(i=0; i<8; i++) {
-                if (dwords[0] == 0xaaaaaaaa && dwords[1] == 0x44894489)
-                                break;
-
-                mask <<= 0x01;
-                mask |= 0x01;
-
-                dwords[0] <<= 1;
-                dwords[0] |= (dwords[1] & 0x80000000) >> 31;
-
-                dwords[1] <<= 1;
-                dwords[1] |= (dwords[2] & 0x80000000) >> 31;
-
-                dwords[2] <<= 1;
-        }
-        printf("%08x %08x\n", dwords[0], dwords[1]);
-        shifts = i;
-        printf("Shifted %d times!\n", shifts);
-        printf("%02x - MASK\n", mask);
-        printf("%08x\n", dwords[2]);
-        mask <<= (32-i);
-        printf("%02x - MASK\n", mask);
-        dwords[2] |= (dwords[3] & mask) >> (32 - i);
-        printf("%08x\n", dwords[2]);
-
-        dwords += 3;
-        dwords_len = (0x3000 - (1080 + 12)) / 4;
-        
-        for(i=0; i<dwords_len; i++) {
-                dwords[i] <<= shifts;
-                if (i < (dwords_len-1))
-                        dwords[i] |= (dwords[i+1] & mask) >> (32-shifts);
-        }
-
-        dwords -= 1;
-        ram += 8;
-	info = decode_mfm_sector(ram, MFM_TRACK_LEN, data);
-	print_sector_info(info);
-        //hexdump(data, 512);
-        
-        // ----- AGAIN 1 ------
-
-        ram += 1080;
-        mask = 0;
-        dwords = (uint32_t * volatile)ram;
-
-        printf("%08x\n", dwords[2]);
-        for(i=0; i<8; i++) {
-                if (dwords[0] == 0xaaaaaaaa && dwords[1] == 0x44894489)
-                                break;
-
-                mask <<= 0x01;
-                mask |= 0x01;
-
-                dwords[0] <<= 1;
-                dwords[0] |= (dwords[1] & 0x80000000) >> 31;
-
-                dwords[1] <<= 1;
-                dwords[1] |= (dwords[2] & 0x80000000) >> 31;
-
-                dwords[2] <<= 1;
-        }
-        
-        if (mask) {
-                printf("%08x %08x\n", dwords[0], dwords[1]);
-                shifts = i;
-                printf("Shifted %d times!\n", shifts);
-                printf("%02x - MASK\n", mask);
-                printf("%08x\n", dwords[2]);
-                mask <<= (32-i);
-                printf("%02x - MASK\n", mask);
-                dwords[2] |= (dwords[3] & mask) >> (32 - i);
-                printf("%08x\n", dwords[2]);
-
-                dwords += 3;
-                dwords_len = (0x3000 - (1080 + 12)) / 4;
-
-                for(i=0; i<dwords_len; i++) {
-                        dwords[i] <<= shifts;
-                        if (i < (dwords_len-1))
-                                dwords[i] |= (dwords[i+1] &= mask) >> (32-shifts);
-                }
-
-                dwords -= 1;
-        }
-
-        ram += 8;
-	info = decode_mfm_sector(ram, MFM_TRACK_LEN, data);
-	print_sector_info(info);
-
-        // ----- AGAIN 2 ------
-
-        ram += 1080;
-        mask = 0;
-        dwords = (uint32_t * volatile)ram;
-
-        printf("%08x\n", dwords[2]);
-        for(i=0; i<8; i++) {
-                if (dwords[0] == 0xaaaaaaaa && dwords[1] == 0x44894489)
-                                break;
-
-                mask <<= 0x01;
-                mask |= 0x01;
-
-                dwords[0] <<= 1;
-                dwords[0] |= (dwords[1] & 0x80000000) >> 31;
-
-                dwords[1] <<= 1;
-                dwords[1] |= (dwords[2] & 0x80000000) >> 31;
-
-                dwords[2] <<= 1;
-        }
-        
-        if (mask) {
-                printf("%08x %08x\n", dwords[0], dwords[1]);
-                shifts = i;
-                printf("Shifted %d times!\n", shifts);
-                printf("%02x - MASK\n", mask);
-                printf("%08x\n", dwords[2]);
-                mask <<= (32-i);
-                printf("%02x - MASK\n", mask);
-                dwords[2] |= (dwords[3] & mask) >> (32 - i);
-                printf("%08x\n", dwords[2]);
-
-                dwords += 3;
-                dwords_len = (0x3000 - (1080 + 12)) / 4;
-
-                for(i=0; i<dwords_len; i++) {
-                        dwords[i] <<= shifts;
-                        if (i < (dwords_len-1))
-                                dwords[i] |= (dwords[i+1] &= mask) >> (32-shifts);
-                }
-
-                dwords -= 1;
-        }
-
-        ram += 8;
-	info = decode_mfm_sector(ram, MFM_TRACK_LEN, data);
-	print_sector_info(info);
+        decode_track();
 
 	return 0;
 }
@@ -467,7 +319,7 @@ static const struct modes {
 } modes[] = {
 	{ "identify", "print name of disk, and exit", init_identify },
 	{ "read", "read entire disk to file", init_read },
-	{ "read_sector", "read and dump single sector", init_read_sector },
+	{ "read_track", "read and dump single track", init_read_track },
 	{ "test", "test the motor control, one second test", init_test },
 	{ "reset", "Reset head to cylinder 0", reset_drive },
 	{ NULL, NULL }
