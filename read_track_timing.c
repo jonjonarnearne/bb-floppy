@@ -248,8 +248,10 @@ static void quantize_samples(uint16_t * samples, int sample_count)
 
 int read_track_timing(int argc, char ** argv)
 {
-	int rc, i, opt, sample_count, measure = 0, quantize = 0;
-	const char *filename = NULL;
+	int rc, i, opt, sample_count,
+	    measure = 0, quantize = 0, count = 1;
+	const char *fn = NULL;
+	char *filename = NULL;
 	FILE *fp;
         uint16_t *timing = NULL;
 	enum pru_head_side track_side = PRU_HEAD_UPPER;
@@ -261,7 +263,7 @@ int read_track_timing(int argc, char ** argv)
                 return 0;
         }
 
-	while((opt = getopt(argc, argv, "-lMQ")) != -1) {
+	while((opt = getopt(argc, argv, "-lMQC:")) != -1) {
 		switch(opt) {
 		case 'l':
 			track_side = PRU_HEAD_LOWER;
@@ -272,65 +274,90 @@ int read_track_timing(int argc, char ** argv)
 		case 'Q':
 			quantize = 1;
 			break;
+		case 'C':
+			count = strtol(optarg, NULL, 0);
+			if (count < 1) count = 1;
+			if (count > 99) count = 99;
+			break;
 		case 1:
 			// If you specify a filename,
                         // we will save the data to that file.
-			filename = argv[optind-1]; //optarg;
-			printf("Filename detected: %s\n", filename);
+			fn = argv[optind-1]; //optarg;
+			printf("Filename detected: %s\n", fn);
+		}
+	}
+
+	if (fn) {
+		filename = malloc(strlen(fn) + 5);
+		if (!filename) {
+			fprintf(stderr,
+				"fatal -- Couldn't allocate memory for filename buffer!\n"
+			);
+			return -1;
+		}
+		if (count == 1) {
+			strcpy(filename, fn);
+		} else {
+			sprintf(filename, "%s%02d", fn, count);
+			//printf("filename: %s\n", filename);
 		}
 	}
 
         pru_start_motor(pru);
         pru_set_head_side(pru, track_side);
-	sample_count = pru_read_bit_timing(pru, &timing);
-        pru_stop_motor(pru);
 
-	printf("\tGot %d samples\n", sample_count);
+	do {
+		sample_count = pru_read_bit_timing(pru, &timing);
 
-	if (quantize) {
-		printf("Quantize!\n");
-                quantize_samples(timing, sample_count);
-	}
+		printf("\tGot %d samples\n", sample_count);
 
-        if (measure) {
-                measure_samples(timing, sample_count);
-		printf("517: %03d %03d %03d %03d %03d\n"
-		       "522: %03d %03d %03d %03d %03d\n"
-		       "527: %03d %03d %03d %03d %03d\n",
-		timing[517], timing[518], timing[519], timing[520], timing[521],
-		timing[522], timing[523], timing[524], timing[525], timing[526],
-		timing[527], timing[528], timing[529], timing[530], timing[531]);
-		
-        }
-
-	rc = find_std_sector_headers(timing, sample_count, header, 11);
-	printf("got %d headers\n", rc);
-
-	if (!rc) {
-		fprintf(stderr,
-			"Couldn't find any standard sectors in data stream!\n"
-			);
-	} else {
-		h = header;
-		for (i = 0; i < rc; i++) {
-			MFM_INFO_PRINT(h->info);
-			if (!h->head_chksum_ok)
-				printf("Head Chksum error!\n");
-			if (!h->data_chksum_ok)
-				printf("Data Chksum error!\n");
-			h++;
+		if (quantize) {
+			printf("Quantize!\n");
+			quantize_samples(timing, sample_count);
 		}
-	}
 
+		if (measure) {
+			measure_samples(timing, sample_count);
+			printf("517: %03d %03d %03d %03d %03d\n"
+			       "522: %03d %03d %03d %03d %03d\n"
+			       "527: %03d %03d %03d %03d %03d\n",
+			timing[517], timing[518], timing[519], timing[520], timing[521],
+			timing[522], timing[523], timing[524], timing[525], timing[526],
+			timing[527], timing[528], timing[529], timing[530], timing[531]);
+			
+		}
 
-	if (filename) {
+		rc = find_std_sector_headers(timing, sample_count, header, 11);
+		printf("got %d headers\n", rc);
+
+		if (!rc) {
+			fprintf(stderr,
+				"Couldn't find any standard sectors in data stream!\n"
+				);
+		} else {
+			h = header;
+			for (i = 0; i < rc; i++) {
+				MFM_INFO_PRINT(h->info);
+				if (!h->head_chksum_ok)
+					printf("Head Chksum error!\n");
+				if (!h->data_chksum_ok)
+					printf("Data Chksum error!\n");
+				h++;
+			}
+		}
+
 		fp = fopen(filename, "w");
 		fwrite(timing, sizeof(*timing), sample_count, fp);
 		fclose(fp);
-	}
 
+		sprintf(filename, "%s%02d", fn, count - 1);
+	} while(--count);
+
+	pru_stop_motor(pru);
+
+	free(filename);
 	free(timing);
-        return 0;
+	return 0;
 }
 
 int write_track_timing(int argc, char ** argv)
