@@ -1,0 +1,21 @@
+
+
+    P8:
+            11: 0x034 -> 
+            12: 0x030 ->
+            15: 0x03C       <- MODE6 <- BIT 15
+            16: 0x038       <- MODE6 <- BIT 14
+
+    P9:
+            24: 0x184       <- MODE6 <- BIT 16
+            25: 0x1AC       <> MODE6 <- BIT 7
+
+            27: 0x1A4       <> MODE5 -> BIT 5
+            28: 0x19C       <> MODE5 -> BIT 3
+            29: 0x194       <> MODE5 -> BIT 1
+            30: 0x198       <> MODE5 -> BIT 2
+            31: 0x190       <> MODE5 -> BIT 0
+            41: 0x1A8       <> MODE5 -> BIT 6 | *Set 0x1B4 to input!
+            42: 0x1A0       <> MODE5 -> BIT 4 | *Set 0x164 to input!
+
+

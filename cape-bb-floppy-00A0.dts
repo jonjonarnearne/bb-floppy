@@ -1,0 +1,92 @@
+/*
+* Copyright (C) 2018 Jon Arne Joergensen <jonjon.arnearne@gmail.com>
+* V - a0 23.3.2018
+* part-number is shown in $SLOTS
+*
+* Pinmode:
+* BIT 0-2 : [0 - 7] Mode
+* BIT 3   : [0 | 1] ENABLE | DISABLE \ PULLUP|PULLDOWN
+
+* BIT 4   : [0 | 1] PULLDOWN | PULLUP 
+* BIT 5   : [0 | 1] OUTPUT | INPUT
+* BIT 6   : [0 | 1] Slew Fast | Slew Slow
+* BIT 7   : N\A
+
+
+    THIS FILE MUST BE COMPILED ON HOST ???? !!!!
+*/
+
+/dts-v1/;
+/plugin/;
+
+/ {
+  compatible = "ti,beaglebone-black";
+  part-number = "BB-BONE-FLOPPY";
+  version = "00A0";
+
+	/* State the resources this cape uses: 10 Pins
+     * 6 Outputs:
+            Head Select     - 32
+            Write Enable    - 24
+            Write Data      - 22
+            Step            - 20
+            Direction       - 18
+            Motor Enable    - 16
+            |Drive Select   - 12
+     * 4 Inputs:
+            Read Data       - 30
+            Write Protect   - 28
+            Track 0         - 26
+            Index           -  8
+
+		"pruss";
+    */
+	exclusive-use =
+		"P8.15",        /* Input */
+		"P8.16",        /* Input */
+		"P9.24",        /* Input */
+		"P9.25",        /* Input */
+
+		"P9.27",        /* Output */
+		"P9.28",        /* Output */
+		"P9.29",        /* Output */
+		"P9.30",        /* Output */
+		"P9.31",        /* Output */
+		"P9.41",        /* Output */
+		"P9.42",        /* Output */
+        "pru0";
+
+	fragment@0 {
+		target = <&am33xx_pinmux>;
+		__overlay__ {
+
+			pru_pru_pins: pinmux_pru_pru_pins {
+				pinctrl-single,pins = <
+                    0x03c 0x26 /* P8_15 = pr1_pru0_pru_r31_15 ( MODE6 | INPUT )             */
+                    0x038 0x26 /* P8_16 = pr1_pru0_pru_r31_14 ( MODE6 | INPUT )             */
+                    0x184 0x2e /* P9_24 = pr1_pru0_pru_r31_16 ( MODE6 | INPUT )		    */
+                    0x1ac 0x26 /* P9_25 = pr1_pru0_pru_r31_7  ( MODE6 | INPUT )             */
+
+                    0x1a4 0x15 /* P9_27 = pr1_pru0_pru_r30_5  ( MODE5 | OUTPUT | PULL UP )  */
+                    0x19c 0x15 /* P9_28 = pr1_pru0_pru_r30_3  ( MODE5 | OUTPUT | PULL UP )  */
+                    0x194 0x15 /* P9_29 = pr1_pru0_pru_r30_1  ( MODE5 | OUTPUT | PULL UP )  */
+                    0x198 0x15 /* P9_30 = pr1_pru0_pru_r30_2  ( MODE5 | OUTPUT | PULL UP )  */
+                    0x190 0x15 /* P9_31 = pr1_pru0_pru_r30_0  ( MODE5 | OUTPUT | PULL UP )  */
+                    0x1a8 0x15 /* P9_41 = pr1_pru0_pru_r30_6  ( MODE5 | OUTPUT | PULL UP )  */
+                    0x1a0 0x15 /* P9_42 = pr1_pru0_pru_r30_4  ( MODE5 | OUTPUT | PULL UP )  */
+				>;
+			};
+		};
+	};
+
+	fragment@2{
+		target = <&pruss>;
+		__overlay__ {
+			status = "okay";
+
+			pinctrl-names = "default";
+			pinctrl-0 = <&pru_pru_pins>;
+		};
+	};
+};
+
