@@ -58,6 +58,7 @@ struct pru * pru_setup(void)
 		return NULL;
 	}
 
+        pru->running = 0;
 	pru->ram = ram;
 	pru->shared_ram = shared_ram;
 
@@ -68,42 +69,60 @@ struct pru * pru_setup(void)
 		prussdrv_exit();
                 return NULL;
         }
+	prussdrv_pru_wait_event(PRU_EVTOUT_0);
+	prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
+
+        pru->running = 1;
+
+	// The firmware is now waiting for command!
 
 	return pru;
 }
 
+void stop_fw(struct pru * pru)
+{
+	volatile struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
+        if (!pru->running) return;
+
+        pru->running = 0;
+	intf->command = COMMAND_QUIT;
+
+	prussdrv_pru_wait_event(PRU_EVTOUT_0);
+	prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
+
+	if (intf->command != (COMMAND_QUIT & 0x7f))
+                printf("QUIT wrong Ack: 0x%02x\n", intf->command);
+
+	return;
+}
+
 void pru_exit(struct pru * pru)
 {
+        if (pru->running)
+                stop_fw(pru);
+
 	prussdrv_pru_disable(PRU_NUM0);
 	prussdrv_exit();
+        free(pru);
 }
 
 void pru_wait_event(struct pru * pru)
 {
-	(void)pru;
+        if (!pru->running) return;
 	prussdrv_pru_wait_event(PRU_EVTOUT_0);
 }
 void pru_clear_event(struct pru * pru)
 {
-	(void)pru;
+        if (!pru->running) return;
 	prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
 }
 
-void pru_send_quit(struct pru * pru)
-{
-	volatile struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
-	intf->command = COMMAND_QUIT;
-}
-
-int pru_is_done(struct pru * pru)
-{
-	volatile struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
-	return (intf->command == COMMAND_QUIT_ACK);
-}
 
 void pru_start_motor(struct pru * pru)
 {
 	volatile struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
+        if (!pru->running) return;
+
 	intf->command = COMMAND_START_MOTOR;
 	prussdrv_pru_wait_event(PRU_EVTOUT_0);
 	prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
@@ -117,6 +136,8 @@ void pru_start_motor(struct pru * pru)
 void pru_stop_motor(struct pru * pru)
 {
 	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
+        if (!pru->running) return;
+
 	intf->command = COMMAND_STOP_MOTOR;
 	prussdrv_pru_wait_event(PRU_EVTOUT_0);
 	prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
@@ -126,3 +147,17 @@ void pru_stop_motor(struct pru * pru)
 	printf("Motor stopped\n");
 	return;
 }
+
+void pru_read_sector(struct pru * pru)
+{
+	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
+        if (!pru->running) return;
+	intf->command = COMMAND_READ_SECTOR;
+        prussdrv_pru_wait_event(PRU_EVTOUT_0);
+        prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
+	if (intf->command != (COMMAND_READ_SECTOR & 0x7f))
+                printf("Got wrong Ack: 0x%02x\n", intf->command);
+
+	return;
+}
+
