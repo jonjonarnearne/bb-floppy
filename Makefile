@@ -3,30 +3,39 @@
 CFLAGS+= -Wall -O2 -mtune=cortex-a8 -march=armv7-a
 LIBS+= -lprussdrv
 PASM=/usr/bin/pasm
+P_LIBS=
 
+PROCESS=bb-process
 BIN=bb-floppy
 BUILD_DIR=./build
 SRCS=main.c pru-setup.c read_track_timing.c list.c
+P_SRCS=process.c
 
 FIRMWARE=$(BUILD_DIR)/firmware.bin
 OBJ=$(BUILD_DIR)/firmware.o
 OBJ+=$(SRCS:%.c=$(BUILD_DIR)/%.o)
+PROCESS_OBJ=$(P_SRCS:%.c=$(BUILD_DIR)/%.o)
 
 $(info $$OBJ id [${OBJ}])
 
 DEP=$(OBJ:%.o=%.d)
 
-all: $(BIN)
+all: $(BIN) $(PROCESS)
 cape: $(BUILD_DIR)/cape-bb-floppy-00A0.dtbo
 
 
 # Default target
 $(BIN) : $(BUILD_DIR)/$(BIN)
+$(PROCESS) : $(BUILD_DIR)/$(PROCESS)
 
 # Actual target - depends on all .o files
 $(BUILD_DIR)/$(BIN) : $(OBJ)
 	mkdir -p $(@D)
 	$(CC) $(CFLAGS) $^ $(LIBS) -o $@
+
+$(BUILD_DIR)/$(PROCESS) : $(PROCESS_OBJ)
+	mkdir -p $(@D)
+	$(CC) $(CFLAGS) $^ $(P_LIBS) -o $@
 
 # Include all .d files . Created by gcc
 -include $(DEP)
