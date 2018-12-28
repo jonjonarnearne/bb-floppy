@@ -594,7 +594,15 @@ int pru_write_timing(struct pru * pru, uint16_t *source,
         return intf->read_count;
 }
 
-int pru_read_timing(struct pru * pru, uint16_t ** data)
+/* Read the timing of each bit from current track on floppy.
+ * The read will start from INDEX, and read <revolutions> revolutions.
+ * The function will return the number of samples read,
+ * and the <data> pointer will contain the samples.
+ * If <rev_offsets> is not NULL, it will be pointed to an array
+ * of offsets into data for the start of each revolution.
+ */
+int pru_read_timing(struct pru * pru, uint16_t ** data,
+                uint8_t revolutions, uint32_t ** rev_offsets)
 {
         uint16_t * volatile source = (uint16_t * volatile)pru->shared_ram;
 
@@ -603,7 +611,13 @@ int pru_read_timing(struct pru * pru, uint16_t ** data)
         uint8_t mul = 0;
 
 	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
+        if (!data) {
+                fprintf(stderr, "fatal -- data is NULL\n");
+                return 0;
+        }
+
 	*data = NULL;
+
         if (!pru->running)
 		return 0;
 
@@ -615,13 +629,15 @@ int pru_read_timing(struct pru * pru, uint16_t ** data)
         }
 
         memset(pru->shared_ram, 0x00, 0x3000);
+        intf->argument = revolutions;
 	intf->command = COMMAND_READ_TIMING;
 
         while(1) {
                 prussdrv_pru_wait_event(PRU_EVTOUT_0);
                 prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
 
-                // We read 0x1000 bytes at a time, from the 0x3000byte buffer
+                // We read 0x1000 bytes at a time,
+                // from the first 0x2000 bytes of the 0x3000 byte buffer
                 // jumping back and forth in sync with the PRU
 	        if (intf->command == COMMAND_READ_TIMING) {
                         rc = bb_list_append(buffer_list, source,
@@ -668,6 +684,19 @@ int pru_read_timing(struct pru * pru, uint16_t ** data)
         }
         bb_list_free(buffer_list);
         buffer_list = NULL;
+
+        if (!rev_offsets)
+                return intf->read_count;
+
+        *rev_offsets = malloc(0x1000);
+        if (!*rev_offsets) {
+                fprintf(stderr,
+                        "Couldn't allocate memory for revolution offsets!\n");
+                free(*data);
+                *data = NULL;
+                return 0;
+        } 
+        memcpy(*rev_offsets, pru->shared_ram + 0x2000, 0x1000);
 
 	return intf->read_count;
 }

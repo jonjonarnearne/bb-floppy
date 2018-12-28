@@ -803,7 +803,8 @@ fnGet_Erase:
         jmp  write_track.ret_addr                                               //  5ns
 .leave write_track_scope
 
-#define BREAK_ON_IDX_LOW 0
+#define BREAK_ON_INDEX_PIN_LOW_FLAG   0
+#define INDEX_PIN_LOW_FLAG 1
 .struct Read_Bit_Timing
         .u8   flags
         .u8   unused
@@ -821,7 +822,7 @@ fnRead_Bit_Timing:
 
         rclr read_bit_timing.total_time
         rclr read_bit_timing.ram_offset
-        clr  read_bit_timing.flags, BREAK_ON_IDX_LOW
+        clr  read_bit_timing.flags, BREAK_ON_INDEX_PIN_LOW_FLAG
 
         // Read for 240.000.012 ns ~ 240.000us = 1.2revolutions.
         // 240.000.012/30 = 8.000.000 = 0x007a.1200
@@ -899,11 +900,11 @@ read_bit_timing_store:
 read_bit_timing_skip_interrupt:
         qbbc read_bit_timing_index_low, PIN_INDEX
 
-        set  read_bit_timing.flags, BREAK_ON_IDX_LOW
+        set  read_bit_timing.flags, BREAK_ON_INDEX_PIN_LOW_FLAG
         jmp  skip_read_bit_timing_index_low
 
 read_bit_timing_index_low:
-        qbbs read_bit_timing_done, read_bit_timing.flags, BREAK_ON_IDX_LOW
+        qbbs read_bit_timing_done, read_bit_timing.flags, BREAK_ON_INDEX_PIN_LOW_FLAG
 skip_read_bit_timing_index_low:
 
         // Break if we have exhausted our memory
@@ -973,11 +974,11 @@ write_bit_timing_loop:
 
         qbbc write_bit_timing_index_low, PIN_INDEX
 
-        set  write_bit_timing.flags, BREAK_ON_IDX_LOW
+        set  write_bit_timing.flags, BREAK_ON_INDEX_PIN_LOW_FLAG
         jmp  write_bit_timing_timer_high
 
 write_bit_timing_index_low:
-        qbbs write_bit_timing_break_loop, write_bit_timing.flags, BREAK_ON_IDX_LOW
+        qbbs write_bit_timing_break_loop, write_bit_timing.flags, BREAK_ON_INDEX_PIN_LOW_FLAG
 
 write_bit_timing_timer_high:
         // Each iteration takes 30ns
@@ -1157,13 +1158,13 @@ write_timing_check_index_pin:
 
         // Index is NOT asserted (PIN_INDEX == HIGH)
         // Set the flag to break on low
-        set  write_timing.flags, BREAK_ON_IDX_LOW
+        set  write_timing.flags, BREAK_ON_INDEX_PIN_LOW_FLAG
         jmp  write_timing_index_high
 
 write_timing_index_low:
         // INDEX is asserted (PIN_INDEX == LOW)
         // Check if the flag to break is set!
-        qbbs write_timing_BREAK_LOOP, write_timing.flags, BREAK_ON_IDX_LOW
+        qbbs write_timing_BREAK_LOOP, write_timing.flags, BREAK_ON_INDEX_PIN_LOW_FLAG
         nop0 r0, r0, r0
         // -- 10 ns
 write_timing_index_high:
@@ -1264,25 +1265,38 @@ write_timing_timer_WEAK_HI_LOOP:
 
 .struct Read_Timing
         .u8   flags
-        .u8   unused
+        .u8   revolutions
+        .u8   revolution_count
+        .u8   unused1
+        .u16  rev_ram_offset
+        .u16  unused2
         .u16  timer
         .u16  ram_offset        // Position of write pointer
         .u16  ret_addr
         .u16  mask
-        .u16  unused1
         .u32  sample_count      // Number of samples read
         .u32  total_time
         .u32  target_time
 .ends
 .enter read_timing_scope
-.assign Read_Timing, r19, r24, read_timing
+.assign Read_Timing, r19, r25, read_timing
 fnRead_Timing:
         rcp  read_timing.ret_addr, STACK.ret_addr
 
         rclr read_timing.total_time
         rclr read_timing.ram_offset
         rclr read_timing.sample_count
-        clr  read_timing.flags, BREAK_ON_IDX_LOW
+        clr  read_timing.flags, BREAK_ON_INDEX_PIN_LOW_FLAG
+        set  read_timing.flags, INDEX_PIN_LOW_FLAG
+
+        // Limit revolution count to 64
+        qbgt read_timing_set_revolutions, interface.argument, #64
+        ldi  interface.argument, #64
+
+read_timing_set_revolutions:
+        rcp  read_timing.revolutions, interface.argument
+        rclr read_timing.revolution_count
+        ldi  read_timing.rev_ram_offset, #0x2000
 
         // Read for 200.000.010 ns ~ 200.000us = 1.0revolutions.
         // 200.000.010/30 = 6.666.667 loops = 0x0065.b9ab
@@ -1303,7 +1317,7 @@ read_timing_LOOP:
         rclr read_timing.timer
 
 read_timing_timer_TIME_LOW:
-        inc read_timing.timer
+        inc  read_timing.timer
         qbbc read_timing_timer_TIME_LOW, PIN_READ_DATA
 read_timing_timer_TIME_HIGH:
         inc  read_timing.timer
@@ -1355,24 +1369,49 @@ read_timing_wrong_offset:
         // ---- 60ns from PIN_READ_DATA LOW
 
 read_timing_check_index_pin:
-        qbbc read_timing_index_low, PIN_INDEX
+        qbbs read_timing_low_index, read_timing.flags, INDEX_PIN_LOW_FLAG 
 
-        // PIN INDEX is HIGH, SET break flag.
-        set  read_timing.flags, BREAK_ON_IDX_LOW
-        jmp  read_timing_index_not_low
+read_timing_hi_index:
+        qbbs read_timing_index_no_change, PIN_INDEX
+        // Found falling edge -- PIN_INDEX is ASSERTED
+        set  read_timing.flags, INDEX_PIN_LOW_FLAG
 
-read_timing_index_low:
+        sbbo read_timing.sample_count, GLOBAL.sharedMem, \
+                read_timing.rev_ram_offset, SIZE(read_timing.sample_count)
+        add  read_timing.rev_ram_offset, read_timing.rev_ram_offset, \
+                                        SIZE(read_timing.sample_count)
+
+        dec  read_timing.revolutions
+        qbeq read_timing_BREAK_LOOP, read_timing.revolutions, #0
+        jmp  read_timing_sleep_delay
+
+read_timing_low_index:
+        qbbc read_timing_index_no_change, PIN_INDEX
+        // Found rising edge
+        clr  read_timing.flags, INDEX_PIN_LOW_FLAG
         nop0 r0, r0, r0
         nop0 r0, r0, r0
-        // PIN_INDEX is LOW, and break flag is set GOTO BREAK!
-        qbbs read_timing_BREAK_LOOP, read_timing.flags, BREAK_ON_IDX_LOW
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        jmp  read_timing_sleep_delay
 
-read_timing_index_not_low:
+read_timing_index_no_change:
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+        nop0 r0, r0, r0
+read_timing_sleep_delay:
+        nop0 r0, r0, r0
         // Waste some cycles to make this whole block take 300ns
-        ldi read_timing.timer, #21
-read_timing_low_wait:
+        ldi read_timing.timer, #18
+read_timing_sleep:
         dec read_timing.timer
-        qbne read_timing_low_wait, read_timing.timer, #0
+        qbne read_timing_sleep, read_timing.timer, #0
         
         jmp  read_timing_LOOP
         // ---- 300ns from PIN_READ_DATA LOW
