@@ -610,16 +610,16 @@ int pru_read_timing(struct pru * pru, uint16_t ** data,
         struct bb_list *buffer_list = NULL;
         uint8_t mul = 0;
 
-	struct ARM_IF *intf = (struct ARM_IF *)pru->ram;	
+        struct ARM_IF *intf = (struct ARM_IF *)pru->ram;
         if (!data) {
                 fprintf(stderr, "fatal -- data is NULL\n");
                 return 0;
         }
 
-	*data = NULL;
+        *data = NULL;
 
         if (!pru->running)
-		return 0;
+                return 0;
 
         rc = bb_list_new(&buffer_list);
         if (!rc) {
@@ -630,7 +630,7 @@ int pru_read_timing(struct pru * pru, uint16_t ** data,
 
         memset(pru->shared_ram, 0x00, 0x3000);
         intf->argument = revolutions;
-	intf->command = COMMAND_READ_TIMING;
+        intf->command = COMMAND_READ_TIMING;
 
         while(1) {
                 prussdrv_pru_wait_event(PRU_EVTOUT_0);
@@ -639,7 +639,7 @@ int pru_read_timing(struct pru * pru, uint16_t ** data,
                 // We read 0x1000 bytes at a time,
                 // from the first 0x2000 bytes of the 0x3000 byte buffer
                 // jumping back and forth in sync with the PRU
-	        if (intf->command == COMMAND_READ_TIMING) {
+                if (intf->command == COMMAND_READ_TIMING) {
                         rc = bb_list_append(buffer_list, source,
                                                 0x1000/sizeof(*source));
                         if (!rc) {
@@ -655,7 +655,7 @@ int pru_read_timing(struct pru * pru, uint16_t ** data,
                                 source -= 0x1000/sizeof(*source);
 
                 } else if (intf->command == (COMMAND_READ_TIMING & 0x7f)) {
-			// The drive is done reading
+                        // The drive is done reading
                         break;
                 } else {
                         printf("Got wrong Ack: 0x%02x\n", intf->command);
@@ -698,5 +698,5 @@ int pru_read_timing(struct pru * pru, uint16_t ** data,
         } 
         memcpy(*rev_offsets, pru->shared_ram + 0x2000, 0x1000);
 
-	return intf->read_count;
+        return intf->read_count;
 }
