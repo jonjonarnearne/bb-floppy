@@ -611,7 +611,7 @@ int pru_read_timing(struct pru * pru, uint16_t ** timing_data,
         uint8_t *data_ptr;
         uint16_t *timing_ptr;
 
-        int rc, sample_count = 0, extra_samples = 0;
+        int i, sample_count = 0, extra_samples = 0;
         uint8_t mul = 0;
 
         struct ARM_IF *intf = (struct ARM_IF *)pru->ram;
@@ -626,7 +626,8 @@ int pru_read_timing(struct pru * pru, uint16_t ** timing_data,
                         "Couldn't allocate memory for raw_timing\n");
                 return 0;
         }
-        data_ptr = raw_timing;
+
+        data_ptr = (uint8_t *)raw_timing;
 
         memset(pru->shared_ram, 0x00, 0x3000);
         intf->argument = revolutions;
