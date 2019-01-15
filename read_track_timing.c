@@ -335,6 +335,18 @@ int read_track_timing(int argc, char ** argv)
 		printf("Quantize!\n");
 		quantize_samples(timing, sample_count);
 	}
+	if (measure) {
+		measure_samples(timing, sample_count);
+		/*
+		printf("517: %03d %03d %03d %03d %03d\n"
+			"522: %03d %03d %03d %03d %03d\n"
+			"527: %03d %03d %03d %03d %03d\n",
+		timing[517], timing[518], timing[519], timing[520],
+		timing[521], timing[522], timing[523], timing[524],
+		timing[525], timing[526], timing[527], timing[528],
+		timing[529], timing[530], timing[531]);
+		*/
+	}
 
 	rc = find_std_sector_headers(timing, offsets[0],
 					header, 11);
