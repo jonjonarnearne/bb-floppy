@@ -250,19 +250,25 @@ static void quantize_samples(uint16_t * samples, int sample_count)
 
 int read_track_timing(int argc, char ** argv)
 {
-	int rc, i, opt, sample_count,
-		measure = 0, quantize = 0, count = 1;
+	int rc, i, e, opt, sample_count,
+	measure = 0, quantize = 0, count = 1;
 	const char *fn = NULL;
 	char *filename = NULL;
 	FILE *fp;
 	uint16_t *timing = NULL;
 	uint32_t *offsets = NULL;
 	enum pru_head_side track_side = PRU_HEAD_UPPER;
+	uint8_t track_no = 0, chksum_err = 0;
 	struct mfm_sector_header *header, *h;
 
 
-	while((opt = getopt(argc, argv, "-lMQC:")) != -1) {
+	while((opt = getopt(argc, argv, "-lMQt:C:")) != -1) {
 		switch(opt) {
+		case 't':
+			track_no = strtol(optarg, NULL, 0);
+			if (track_no < 0) track_no = 0;
+			if (track_no > 79) track_no = 79;
+			break;
 		case 'l':
 			track_side = PRU_HEAD_LOWER;
 			break;
@@ -286,7 +292,7 @@ int read_track_timing(int argc, char ** argv)
 		}
 	}
 
-	header = malloc(11 * count * sizeof(*header));
+	header = malloc(11 * sizeof(*header));
 	if (!header) {
 		fprintf(stderr, "Couldn't allocate header buffer\n");
 		return 0;
@@ -309,8 +315,14 @@ int read_track_timing(int argc, char ** argv)
 	}
 
 	pru_start_motor(pru);
+	pru_reset_drive(pru);
+	if (track_no != 0) {
+		pru_set_head_dir(pru, PRU_HEAD_INC);
+		pru_step_head(pru, track_no);
+	}
 	pru_set_head_side(pru, track_side);
 	sample_count = pru_read_timing(pru, &timing, count, &offsets);
+	pru_reset_drive(pru);
 	pru_stop_motor(pru);
 
 	if (!sample_count) {
@@ -324,23 +336,59 @@ int read_track_timing(int argc, char ** argv)
 		quantize_samples(timing, sample_count);
 	}
 
-	if (measure) {
-		measure_samples(timing, sample_count);
-		/*
-		printf("517: %03d %03d %03d %03d %03d\n"
-			   "522: %03d %03d %03d %03d %03d\n"
-			   "527: %03d %03d %03d %03d %03d\n",
-		timing[517], timing[518], timing[519], timing[520],
-		timing[521], timing[522], timing[523], timing[524],
-		timing[525], timing[526], timing[527], timing[528],
-		timing[529], timing[530], timing[531]);
-		*/
-		
+	rc = find_std_sector_headers(timing, offsets[0],
+					header, 11);
+	printf("got %d headers\n", rc);
+
+	if (!rc) {
+		fprintf(stderr,
+			"Couldn't find any standard sectors in data stream!\n"
+		);
+		printf("Offsets:\n");
+		for (i = 0; i < 3; i++) {
+			printf("\t%d\n", offsets[i]);
+		}
+	} else {
+	h = header;
+	for (i = 0; i < rc; i++) {
+		if (i % 11 == 0) printf("---------------\n");
+		MFM_INFO_PRINT(h->info);
+		if (!h->head_chksum_ok) {
+			chksum_err = 1;
+			printf("Head Chksum error!\n");
+		}
+		if (!h->data_chksum_ok) {
+			chksum_err = 1;
+			printf("Data Chksum error!\n");
+		}
+		h++;
 	}
 
-	rc = find_std_sector_headers(timing, sample_count,
-									header, 11 * count);
-	printf("got %d headers\n", rc);
+		if (chksum_err && count > 1) {
+			for (e = 1; e < count; e++) {
+				rc = find_std_sector_headers(timing + offsets[e-1], offsets[e], header, 11);
+				if (!rc) {
+					printf("Loopread failed!\n");
+					continue;
+				}
+				printf("\n-----------------\nIter %d, got %d sectors!\n", e, rc);
+				h = header;
+				for (i = 0; i < rc; i++) {
+					if (i % 11 == 0) printf("---------------\n");
+					MFM_INFO_PRINT(h->info);
+					if (!h->head_chksum_ok) {
+						chksum_err = 1;
+						printf("Head Chksum error!\n");
+					}
+					if (!h->data_chksum_ok) {
+						chksum_err = 1;
+						printf("Data Chksum error!\n");
+					}
+					h++;
+				}
+			}
+		}
+        }
 
 	if (!rc) {
 		fprintf(stderr,
@@ -372,6 +420,7 @@ int read_track_timing(int argc, char ** argv)
 
 	free(filename);
 	free(timing);
+	free(offsets);
 	return 0;
 }
 
