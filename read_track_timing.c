@@ -35,7 +35,7 @@ static int check_sync(struct raw_mfm_sector *sector)
 
 /* Parse timing info, and return <sector_count> sectors in <sectors> ptr.
  * */
-static int find_std_sector_headers(const uint16_t *timing, int sample_count,
+static int find_std_sector_headers(const uint32_t *timing, int sample_count,
                 struct mfm_sector_header * headers, int header_count)
 {
         struct raw_mfm_sector *raw_mfm_sectors, *cur_sector;
@@ -144,7 +144,7 @@ static int find_std_sector_headers(const uint16_t *timing, int sample_count,
 	return header_count;
 }
 
-static void measure_samples(const uint16_t * samples, int sample_count)
+static void measure_samples(const uint32_t * samples, int sample_count)
 {
         int i;
         int brackets[9] = {0};
@@ -232,7 +232,7 @@ static const uint16_t q_limits[] = { 108, 114, 140,
 static const uint16_t q_values[] = { 105, 110, 117,
 				     168, 178, 189,
 				     232, 245, 259 };
-static void quantize_samples(uint16_t * samples, int sample_count)
+static void quantize_samples(uint32_t * samples, int sample_count)
 {
 	int i,e;
 	const uint16_t *lim;
@@ -255,7 +255,7 @@ int read_track_timing(int argc, char ** argv)
 	const char *fn = NULL;
 	char *filename = NULL;
 	FILE *fp;
-	uint16_t *timing = NULL;
+	uint32_t *timing = NULL;
 	uint32_t *offsets = NULL;
 	enum pru_head_side track_side = PRU_HEAD_UPPER;
 	uint8_t track_no = 0, chksum_err = 0;
@@ -600,7 +600,8 @@ int read_timing(int argc, char ** argv)
 		}
 
 		printf("Got %d samples\n", sample_count);
-		rc = find_std_sector_headers(timing, sample_count, header, 11);
+		//rc = find_std_sector_headers(timing, sample_count, header, 11);
+        rc = 0;
 		if (!rc) {
 			fprintf(stderr,
 			"Couldn't find any standard sectors in data stream!\n"

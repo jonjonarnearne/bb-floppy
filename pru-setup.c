@@ -601,7 +601,7 @@ int pru_write_timing(struct pru * pru, uint16_t *source,
  * If <rev_offsets> is not NULL, it will be pointed to an array
  * of offsets into data for the start of each revolution.
  */
-int pru_read_timing(struct pru * pru, uint16_t ** timing_data,
+int pru_read_timing(struct pru * pru, uint32_t ** timing_data,
                 uint8_t revolutions, uint32_t ** rev_offsets)
 {
         uint8_t * volatile pru_buffer = pru->shared_ram;
@@ -609,7 +609,6 @@ int pru_read_timing(struct pru * pru, uint16_t ** timing_data,
 
         uint32_t *raw_timing;
         uint8_t *data_ptr;
-        uint16_t *timing_ptr;
 
         int i, sample_count = 0, extra_samples = 0;
         uint8_t mul = 0;
@@ -670,6 +669,7 @@ int pru_read_timing(struct pru * pru, uint16_t ** timing_data,
         if (sample_count != intf->read_count) 
                 fprintf(stderr, "sample_count is not in sync with pru\n");
 
+        /*
         extra_samples = 0;
         for (i = 0; i < sample_count; i++) {
             if (raw_timing[i] > UINT16_MAX) {
@@ -699,6 +699,9 @@ int pru_read_timing(struct pru * pru, uint16_t ** timing_data,
         free(raw_timing);
 
         sample_count += extra_samples;
+        */
+
+        *timing_data = realloc(raw_timing, sample_count * sizeof(*raw_timing));
 
         if (!rev_offsets)
                 return sample_count;

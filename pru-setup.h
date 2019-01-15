@@ -1,6 +1,8 @@
 #ifndef PRU_SETUP_H
 #define PRU_SETUP_H
 
+#include <stdint.h>
+
 //#define MFM_TRACK_LEN	 0x1900 //1080 //0x1900
 
 #define LE_SYNC_WORD            0x4489
@@ -68,7 +70,7 @@ int pru_read_bit_timing(struct pru * pru, uint16_t ** data);
 int pru_write_bit_timing(struct pru * pru, uint16_t *source,
                                                 int sample_count);
 int pru_test_track_0(struct pru * pru);
-int pru_read_timing(struct pru * pru, uint16_t ** data,
+int pru_read_timing(struct pru * pru, uint32_t ** timing_data,
                 uint8_t revolutions, uint32_t ** rev_offsets);
 int pru_write_timing(struct pru * pru, uint16_t *source,
                                                 int sample_count);

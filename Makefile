@@ -8,7 +8,7 @@ P_LIBS=
 PROCESS=bb-process
 BIN=bb-floppy
 BUILD_DIR=./build
-SRCS=main.c pru-setup.c read_track_timing.c list.c
+SRCS=main.c pru-setup.c scp.c read_track_timing.c list.c
 P_SRCS=process.c
 
 FIRMWARE=$(BUILD_DIR)/firmware.bin

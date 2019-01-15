@@ -10,6 +10,7 @@
 #include "mfm.h"
 #include "pru-setup.h"
 #include "read_track_timing.h"
+#include "scp.h"
 
 #define min(a,b) ((a < b) ? a : b)
 #define max(a,b) ((a > b) ? a : b)
@@ -718,23 +719,26 @@ static const struct modes {
 	const char *short_help;
 	fn_init_ptr init;
 } modes[] = {
-	{ "identify", "print name of disk, and exit", init_identify },
-	{ "read", "read entire disk to mfm image file", init_read },
-	{ "write", "write an mfm image file to disk", init_write },
-	{ "read_track", "read and dump single track", init_read_track },
-	{ "read_sector", "try to read a single sector", init_read_sector },
-	{ "write_track", "write a single track", init_write_track },
-	{ "erase_track", "erase a single track", init_erase_track },
-	{ "test", "test the motor control, one second test", init_test },
-	{ "find_sync", "See if we find any sync marker", find_sync },
-	{ "reset", "Reset head to cylinder 0", reset_drive },
-	{ "step_head", "Move head [I|O] for <n> steps", init_step_head },
-	{ "read_timing", "get timing info from entire disk", read_timing },
-	{ "write_timing", "write a disk from timing info", write_timing },
-	{ "read_track_timing", "Get a list of bit timings", read_track_timing },
-	{ "write_track_timing", "Write a list of bit timings to track", write_track_timing },
+        { "identify", "print name of disk, and exit", init_identify },
+        { "read_scp", "read entire disk to scp format", read_scp },
+        { "read", "read entire disk to mfm image file", init_read },
+        { "write", "write an mfm image file to disk", init_write },
+        { "read_track", "read and dump single track", init_read_track },
+        { "read_sector", "try to read a single sector", init_read_sector },
+        { "write_track", "write a single track", init_write_track },
+        { "erase_track", "erase a single track", init_erase_track },
+        { "test", "test the motor control, one second test", init_test },
+        { "find_sync", "See if we find any sync marker", find_sync },
+        { "reset", "Reset head to cylinder 0", reset_drive },
+        { "step_head", "Move head [I|O] for <n> steps", init_step_head },
+        { "read_timing", "get timing info from entire disk", read_timing },
+        { "write_timing", "write a disk from timing info", write_timing },
+        { "read_track_timing", "Get a list of bit timings",
+                                                            read_track_timing },
+        { "write_track_timing", "Write a list of bit timings to track",
+                                                            write_track_timing },
         { "test_track_0", "Return 1 if we are at track 0", test_track_0 },
-	{ NULL, NULL }
+        { NULL, NULL }
 };
 
 void usage(void)
