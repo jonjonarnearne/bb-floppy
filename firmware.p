@@ -1268,12 +1268,11 @@ write_timing_timer_WEAK_HI_LOOP:
         .u8   revolutions
         .u8   revolution_count
         .u8   unused1
-        .u16  rev_ram_offset
-        .u16  unused2
-        .u16  timer
+        .u16  rev_ram_offset    // Revolutions offset ram_pointer
         .u16  ram_offset        // Position of write pointer
         .u16  ret_addr
         .u16  mask
+        .u32  timer
         .u32  sample_count      // Number of samples read
         .u32  total_time
         .u32  target_time
@@ -1323,7 +1322,9 @@ read_timing_timer_TIME_HIGH:
         inc  read_timing.timer
         qbbs read_timing_timer_TIME_HIGH, PIN_READ_DATA
 
-        //   Add the timing of this low part!
+        // From here to the bottom of this functions,
+        // we spend 300ns.
+        // Add 300ns to the timing data.
         add  read_timing.timer, read_timing.timer, #30
 
         // PIN_READ_DATA, just fell down

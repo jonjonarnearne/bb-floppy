@@ -601,38 +601,40 @@ int pru_write_timing(struct pru * pru, uint16_t *source,
  * If <rev_offsets> is not NULL, it will be pointed to an array
  * of offsets into data for the start of each revolution.
  */
-int pru_read_timing(struct pru * pru, uint16_t ** data,
+int pru_read_timing(struct pru * pru, uint16_t ** timing_data,
                 uint8_t revolutions, uint32_t ** rev_offsets)
 {
-        uint16_t * volatile source = (uint16_t * volatile)pru->shared_ram;
+        uint8_t * volatile pru_buffer = pru->shared_ram;
+        uint8_t * volatile pru_revolutions = pru->shared_ram + 0x2000;
 
-        int rc, sample_count = 0;
-        struct bb_list *buffer_list = NULL;
+        uint32_t *raw_timing;
+        uint8_t *data_ptr;
+        uint16_t *timing_ptr;
+
+        int rc, sample_count = 0, extra_samples = 0;
         uint8_t mul = 0;
 
         struct ARM_IF *intf = (struct ARM_IF *)pru->ram;
-        if (!data) {
-                fprintf(stderr, "fatal -- data is NULL\n");
-                return 0;
-        }
-
-        *data = NULL;
-
         if (!pru->running)
                 return 0;
 
-        rc = bb_list_new(&buffer_list);
-        if (!rc) {
+        // We allocate room for 100,000 samples per revolution,
+        // this should be enough for all disks.
+        raw_timing = calloc(100000*revolutions, sizeof(*raw_timing));
+        if (!raw_timing) {
                 fprintf(stderr,
-                        "Couldn't allocate memory for data list buffer!\n");
+                        "Couldn't allocate memory for raw_timing\n");
                 return 0;
         }
+        data_ptr = raw_timing;
 
         memset(pru->shared_ram, 0x00, 0x3000);
         intf->argument = revolutions;
         intf->command = COMMAND_READ_TIMING;
 
         while(1) {
+                // The PRU will set an interrupt when the buffer is full,
+                // or an error occured.
                 prussdrv_pru_wait_event(PRU_EVTOUT_0);
                 prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
 
@@ -640,63 +642,75 @@ int pru_read_timing(struct pru * pru, uint16_t ** data,
                 // from the first 0x2000 bytes of the 0x3000 byte buffer
                 // jumping back and forth in sync with the PRU
                 if (intf->command == COMMAND_READ_TIMING) {
-                        rc = bb_list_append(buffer_list, source,
-                                                0x1000/sizeof(*source));
-                        if (!rc) {
-                                fprintf(stderr,
-                                "fatal -- Couldn't copy data to buffer!\n");
-                                continue;
-                        }
-                        sample_count += 0x1000/sizeof(*source);
+                        // The buffer is full!
+                        memcpy(data_ptr, pru_buffer, 0x1000);
+                        data_ptr += 0x1000;
+                        sample_count += 0x1000/sizeof(*raw_timing);
 
                         if (++mul & 0x1)
-                                source += 0x1000/sizeof(*source);
+                                pru_buffer += 0x1000;
                         else
-                                source -= 0x1000/sizeof(*source);
+                                pru_buffer -= 0x1000;
 
                 } else if (intf->command == (COMMAND_READ_TIMING & 0x7f)) {
                         // The drive is done reading
                         break;
                 } else {
+                        // An error occured!
                         printf("Got wrong Ack: 0x%02x\n", intf->command);
                         break;
                 }
         }
-        rc = bb_list_append(buffer_list, source,
-                                        intf->read_count - sample_count);
-        if (!rc)
-                fprintf(stderr, "fatal -- Couldn't copy data to buffer!\n");
+        // Read the final bytes from the buffer, if any
+        memcpy(data_ptr, pru_buffer,
+                (intf->read_count - sample_count) * sizeof(*raw_timing));
 
         sample_count += intf->read_count - sample_count;
         if (sample_count != intf->read_count) 
-                fprintf(stderr, "ASSERTION FAILED!!!\n");
+                fprintf(stderr, "sample_count is not in sync with pru\n");
 
-        *data = malloc(intf->read_count * sizeof(**data));
-        if (!*data) {
-                fprintf(stderr,
-                        "Couldn't allocate memory for data list buffer!\n");
-                return 0;
+        extra_samples = 0;
+        for (i = 0; i < sample_count; i++) {
+            if (raw_timing[i] > UINT16_MAX) {
+                extra_samples++;
+                fprintf(stderr, "DEBUG: found long sample!\n");
+            }
         }
+        *timing_data = calloc(sample_count + extra_samples,
+                                    sizeof(*timing_data));
+        if (!*timing_data) {
+            fprintf(stderr,
+                    "Couldn't allocate memory for timing_data\n");
+            free(raw_timing);
+            return 0;
+        }
+        timing_ptr = *timing_data;
 
-        rc = bb_list_flatten(buffer_list, *data, intf->read_count);
-        if (rc) {
-                fprintf(stderr, "Another assertion failed!\n");
+        for (i = 0; i < sample_count; i++) {
+            if (raw_timing[i] > UINT16_MAX) {
+                *timing_ptr = 0x0000;
+                timing_ptr++;
+                raw_timing[i] -= UINT16_MAX;
+            }
+            *timing_ptr = (uint16_t)raw_timing[i];
+            timing_ptr++;
         }
-        bb_list_free(buffer_list);
-        buffer_list = NULL;
+        free(raw_timing);
+
+        sample_count += extra_samples;
 
         if (!rev_offsets)
-                return intf->read_count;
+                return sample_count;
 
         *rev_offsets = malloc(0x1000);
         if (!*rev_offsets) {
                 fprintf(stderr,
                         "Couldn't allocate memory for revolution offsets!\n");
-                free(*data);
-                *data = NULL;
+                free(*timing_data);
+                *timing_data = NULL;
                 return 0;
         } 
-        memcpy(*rev_offsets, pru->shared_ram + 0x2000, 0x1000);
+        memcpy(*rev_offsets, pru_revolutions, 0x1000);
 
-        return intf->read_count;
+        return sample_count;
 }
