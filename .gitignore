@@ -1,1 +1,9 @@
 *.swp
+*~
+test_*
+tests/
+build/
+scp/
+ADF/
+MFM/
+
