@@ -3,6 +3,7 @@
 #include <string.h>
 #include <assert.h>
 #include <endian.h>
+#include <time.h>
 
 #include "pru-setup.h"
 #include "scp.h"
@@ -104,6 +105,10 @@ static int add_scp_track(SCP_FILE scp, uint8_t track_no, uint16_t *flux_data,
         uint32_t *revolution;
         uint32_t offset;
         int sample_count = 0;
+        time_t t;
+        struct tm *now;
+        size_t timestamp_size;
+        char timestamp[20];
         assert(scp);
         assert(track_no >= 0);
         assert(track_no <= scp->end_track);
@@ -130,15 +135,31 @@ static int add_scp_track(SCP_FILE scp, uint8_t track_no, uint16_t *flux_data,
                 revolution += 3;
         }
 
+
+        t = time(NULL);
+        now = gmtime(&t);
+        timestamp_size = strftime(timestamp, 20, "%D %T", now);
+        if (!timestamp_size) {
+                fprintf(stderr, "Failed to get timestamp!\n");
+        }
+
         fseek(scp->fp, scp->offset_table[track_no], SEEK_SET);
         fwrite(tdh, 1, 0x4, scp->fp);
         fwrite(revolution_data, 3 * scp->revolutions,
                 sizeof(*revolution_data), scp->fp);
         fwrite(flux_data, sample_count, sizeof(*flux_data), scp->fp);
+        fwrite(timestamp, timestamp_size, sizeof(*timestamp), scp->fp);
 
         // Setup offset_table to point to the next track (TDH)
         if (track_no < scp->end_track) {
-                scp->offset_table[track_no + 1] = scp->offset_table[track_no] + 0x4 + (sizeof(*revolution_data) * 3 * scp->revolutions) + (sample_count * sizeof(*flux_data));
+                scp->offset_table[track_no + 1] =
+                                        scp->offset_table[track_no] + 0x4;
+                scp->offset_table[track_no + 1] +=
+                        (sizeof(*revolution_data) * 3 * scp->revolutions);
+                scp->offset_table[track_no + 1] +=
+                                        sample_count * sizeof(*flux_data);
+                scp->offset_table[track_no + 1] +=
+                                                        timestamp_size;
                 fprintf(stderr, "New offset: %x\n", scp->offset_table[track_no + 1]);
         }
 
@@ -161,7 +182,7 @@ static int samples2scp(uint16_t **scp_samples, uint32_t *original_sample,
         uint16_t *sample_ptr;
 
         for (i = 0; i < sample_count; i++) {
-                original_sample[i] <<= 2;
+                original_sample[i] <<= 1;
                 original_sample[i] /= 5;
                 if (original_sample[i] <= UINT16_MAX) continue;
                 uint32_t tmp = original_sample[i];
