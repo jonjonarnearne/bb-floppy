@@ -87,11 +87,14 @@ static SCP_FILE create_scp(const char *filename, uint8_t start_track,
         }
         scp->offset_table = offset_table;
         // Mark the start for the first TrackDataHeader (TDH)
-        scp->offset_table[0] = 0x10 + (sizeof(*offset_table) * (end_track+1));
 
         scp->fp = fopen(scp->filename, "wb");
         fwrite(header, 1, 0x10, scp->fp);
+        // Write the empty offset table - we fill it in when we close the file
         fwrite(offset_table, end_track + 1, sizeof(*offset_table), scp->fp);
+
+        // Set the first entry in the offset_table
+        scp->offset_table[0] = htole32(ftell(scp->fp));
 
         return scp;
 }
@@ -152,16 +155,9 @@ static int add_scp_track(SCP_FILE scp, uint8_t track_no, uint16_t *flux_data,
 
         // Setup offset_table to point to the next track (TDH)
         if (track_no < scp->end_track) {
-                scp->offset_table[track_no + 1] =
-                                        scp->offset_table[track_no] + 0x4;
-                scp->offset_table[track_no + 1] +=
-                        (sizeof(*revolution_data) * 3 * scp->revolutions);
-                scp->offset_table[track_no + 1] +=
-                                        sample_count * sizeof(*flux_data);
-                scp->offset_table[track_no + 1] +=
-                                                        timestamp_size;
-                fprintf(stderr, "New offset: %x\n", scp->offset_table[track_no + 1]);
+                scp->offset_table[track_no + 1] = htole32(ftell(scp->fp));
         }
+        printf("ftell: %lx\n", ftell(scp->fp));
 
         return 0;
 }
@@ -169,6 +165,10 @@ static int add_scp_track(SCP_FILE scp, uint8_t track_no, uint16_t *flux_data,
 static void close_scp(SCP_FILE scp)
 {
         assert(scp);
+        // Write the offset table
+        fseek(scp->fp, 0x10, SEEK_SET);
+        fwrite(scp->offset_table, scp->end_track + 1,
+                        sizeof(*scp->offset_table), scp->fp);
         free(scp->offset_table);
         fclose(scp->fp);
 }
