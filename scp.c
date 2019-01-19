@@ -133,9 +133,10 @@ static int add_scp_track(SCP_FILE scp, uint8_t track_no, uint16_t *flux_data,
                 revolution[0] = htole32(durations[i].duration);
                 revolution[1] = htole32(durations[i].sample_count);
                 revolution[2] = htole32(offset);
-                offset += durations[i].sample_count;
-                sample_count += durations[i].sample_count;
                 revolution += 3;
+                printf("offset: %d\n", offset);
+                offset += durations[i].sample_count * sizeof(*flux_data);
+                sample_count += durations[i].sample_count;
         }
 
 
@@ -190,47 +191,51 @@ extern struct pru * pru;
 
 // The pru has timing resolutions of 10.
 // The scp format has 25 as smalles timing resolution.
-// We have to multipy each sample by 0.4 and convert them to uint16_t.
+// We have to multipy each sample by 0.4
+// and convert them to big endian uint16_t.
+//
 // Also, any overflows of the uint16_t shall result
 // in extra 0x0000 samples added to the dataset
 static int samples2scp(uint16_t **scp_samples, struct scp_rev_timing *timing,
                         uint32_t const *original_sample, uint8_t revolutions,
                                                 uint32_t const *index_offsets)
 {
-        int i, e, added_samples = 0;
+        int i, e;
         uint16_t *sample_ptr;
-        uint32_t duration = 0;
-        uint32_t samples_per_rev = 0;
-        int sample_count = 0;
+        int total_out_samples = 0, start_sample = 0;
 
-        for (e = 0; e < revolutions; e++)
-                sample_count += index_offsets[e];
-
-        for (i = 0; i < sample_count; i++) {
-                uint32_t tmp = (original_sample[i] << 1) / 5;
-                duration += tmp;
-                samples_per_rev++;
-                for (e = 0; e < revolutions; e++) {
-                        if (index_offsets[e] != i) continue;
-                        timing[e].duration = duration;
-                        timing[e].sample_count = samples_per_rev;
-                        duration = 0;
-                        samples_per_rev = 0;
+        // First loop to fill the scp_rev_timing, and decide how big the
+        // scp_samples array should be.
+        for (e = 0; e < revolutions; e++) {
+                uint32_t duration = 0;
+                uint32_t samples_per_rev = 0;
+                for (i = start_sample; i < index_offsets[e]; i++) {
+                        uint32_t tmp = (original_sample[i] << 1) / 5;
+                        duration += tmp;
+                        samples_per_rev++;
+                        if (tmp <= UINT16_MAX) continue;
+                        while(tmp > UINT16_MAX) {
+                                tmp -= UINT16_MAX;
+                                samples_per_rev++;
+                        }
                 }
-                if (tmp <= UINT16_MAX) continue;
-                while(tmp > UINT16_MAX) {
-                        tmp -= UINT16_MAX;
-                        added_samples++;
-                }
+                total_out_samples += samples_per_rev;
+                timing[e].duration = duration;
+                timing[e].sample_count = samples_per_rev;
+                start_sample = index_offsets[e];
         }
-        *scp_samples = calloc(sizeof(**scp_samples),
-                                                sample_count + added_samples);
+
+
+        *scp_samples = calloc(sizeof(**scp_samples), total_out_samples);
         if (!*scp_samples) {
                 fprintf(stderr, "Coulden't alloc memory for scp_samples\n");
                 return -1;
         }
         sample_ptr = *scp_samples;
-        for (i = 0; i < sample_count; i++) {
+        // Now do the conversion.
+        // start_sample has a confusing name,
+        // but it's the last value of <index_offset>
+        for (i = 0; i < start_sample; i++) {
                 uint32_t tmp = (original_sample[i] << 1) / 5;
                 while(tmp > UINT16_MAX) {
                         tmp -= UINT16_MAX;
@@ -239,7 +244,8 @@ static int samples2scp(uint16_t **scp_samples, struct scp_rev_timing *timing,
                 sample_ptr[0] = htobe16((uint16_t)tmp);
                 sample_ptr++;
         }
-        return sample_count + added_samples;
+        assert(sample_ptr == *scp_samples + total_out_samples);
+        return total_out_samples;
 }
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
@@ -247,16 +253,10 @@ int read_scp(int argc, char ** argv)
 {
         uint8_t start_track = 0;
         uint8_t end_track = 1;
-        uint8_t revolutions = 1;
+        uint8_t revolutions = 3;
         uint32_t *flux_data;
         uint32_t *index_offsets;
         uint16_t *converted_data;
-        /*= {
-                .duration = 8000000/25, // = 200,000,000ns = 200,000us = 200ms
-                .sample_count = 4
-        };
-        */
-
         enum pru_head_side head = PRU_HEAD_UPPER;
         SCP_FILE file;
         struct scp_rev_timing *timing = calloc(sizeof(*timing), revolutions);
@@ -265,16 +265,40 @@ int read_scp(int argc, char ** argv)
                 return -1;
         }
 
+        flux_data = calloc(sizeof(*flux_data), 4 * revolutions);
+        flux_data[0] = 400;
+        flux_data[1] = 400;
+        flux_data[2] = 400;
+        flux_data[3] = 400;
+        flux_data[4] = 600;
+        flux_data[5] = 600;
+        flux_data[6] = 600;
+        flux_data[7] = 600;
+        flux_data[8] = 800;
+        flux_data[9] = 800;
+        flux_data[10] = 800;
+        flux_data[11] = 800;
+
+        index_offsets = malloc(0x1000);
+        memset(index_offsets, 0x00, 0x1000);
+        index_offsets[0] = 4;
+        index_offsets[1] = 8;
+        index_offsets[2] = 12;
+
+        /*
         pru_start_motor(pru);
         pru_reset_drive(pru);
         pru_set_head_dir(pru, PRU_HEAD_INC);
         pru_set_head_side(pru, head);
         pru_read_timing(pru, &flux_data, revolutions, &index_offsets);
         pru_stop_motor(pru);
+        */
 
+        /*
         printf("[%d - %d - %d]\n", index_offsets[0],
                                         index_offsets[1],
                                         index_offsets[2]);
+        */
 
         file = create_scp("scp/test.scp", start_track, end_track, revolutions);
         if (!file) {
@@ -289,6 +313,7 @@ int read_scp(int argc, char ** argv)
         add_scp_track(file, 0, converted_data, timing);
         close_scp(file);
         free(converted_data);
+        free(flux_data);
         free(index_offsets);
 
 
