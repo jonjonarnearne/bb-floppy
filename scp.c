@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <endian.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "pru-setup.h"
 #include "scp.h"
@@ -134,7 +135,6 @@ static int add_scp_track(SCP_FILE scp, uint8_t track_no, uint16_t *flux_data,
                 revolution[1] = htole32(durations[i].sample_count);
                 revolution[2] = htole32(offset);
                 revolution += 3;
-                printf("offset: %d\n", offset);
                 offset += durations[i].sample_count * sizeof(*flux_data);
                 sample_count += durations[i].sample_count;
         }
@@ -153,12 +153,12 @@ static int add_scp_track(SCP_FILE scp, uint8_t track_no, uint16_t *flux_data,
                 sizeof(*revolution_data), scp->fp);
         fwrite(flux_data, sample_count, sizeof(*flux_data), scp->fp);
         fwrite(timestamp, timestamp_size, sizeof(*timestamp), scp->fp);
+        fflush(scp->fp);
 
         // Setup offset_table to point to the next track (TDH)
         if (track_no < scp->end_track) {
                 scp->offset_table[track_no + 1] = htole32(ftell(scp->fp));
         }
-        printf("ftell: %lx\n", ftell(scp->fp));
 
         return 0;
 }
@@ -257,67 +257,77 @@ static int samples2scp(uint16_t **scp_samples, struct scp_rev_timing **timing,
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 int read_scp(int argc, char ** argv)
 {
+        int i, opt, filename_index = 0;
         uint8_t start_track = 0;
-        uint8_t end_track = 1;
+        uint8_t end_track = 159;
         uint8_t revolutions = 3;
         uint32_t *flux_data;
         uint32_t *index_offsets;
         uint16_t *converted_data;
         struct scp_rev_timing *timing;
-        enum pru_head_side head = PRU_HEAD_UPPER;
         SCP_FILE file;
 
-        flux_data = calloc(sizeof(*flux_data), 4 * revolutions);
-        flux_data[0] = 400;
-        flux_data[1] = 400;
-        flux_data[2] = 400;
-        flux_data[3] = 400;
-        flux_data[4] = 600;
-        flux_data[5] = 600;
-        flux_data[6] = 600;
-        flux_data[7] = 600;
-        flux_data[8] = 800;
-        flux_data[9] = 800;
-        flux_data[10] = 800;
-        flux_data[11] = 800;
+        while((opt = getopt(argc, argv, "-r:")) != -1) {
+                switch(opt) {
+                case 'r':
+                        revolutions = strtol(optarg, NULL, 0);
+                        if (revolutions < 1) revolutions = 1;
+                        if (revolutions > 64) revolutions = 64;
+                        break;
+                case 1:
+                        filename_index = optind - 1;
+                }
+        }
 
-        index_offsets = malloc(0x1000);
-        memset(index_offsets, 0x00, 0x1000);
-        index_offsets[0] = 4;
-        index_offsets[1] = 8;
-        index_offsets[2] = 12;
+        if (!filename_index) {
+                fprintf(stderr,
+                        "You must specify a filename for the scp file\n");
+                return -1;
+        }
 
-        /*
-        pru_start_motor(pru);
-        pru_reset_drive(pru);
-        pru_set_head_dir(pru, PRU_HEAD_INC);
-        pru_set_head_side(pru, head);
-        pru_read_timing(pru, &flux_data, revolutions, &index_offsets);
-        pru_stop_motor(pru);
-        */
-
-        /*
-        printf("[%d - %d - %d]\n", index_offsets[0],
-                                        index_offsets[1],
-                                        index_offsets[2]);
-        */
-
-        samples2scp(&converted_data, &timing, flux_data, revolutions,
-                                                        index_offsets);
-
-        file = create_scp("scp/test.scp", start_track, end_track, revolutions);
+        file = create_scp(argv[filename_index], start_track, end_track, revolutions);
         if (!file) {
                 return -1;
         }
         printf("Filename: %s\n", file->filename);
-        add_scp_track(file, 0, converted_data, timing);
+
+        pru_start_motor(pru);
+        pru_reset_drive(pru);
+
+
+        pru_set_head_dir(pru, PRU_HEAD_INC);
+        for (i = 0; i < 160; i++) {
+                printf("Read track: %d, head: %d\n", i >> 1, i & 1);
+                if (i % 2) {
+                        pru_set_head_side(pru, PRU_HEAD_LOWER);
+                } else {
+                        pru_set_head_side(pru, PRU_HEAD_UPPER);
+                }
+
+                pru_read_timing(pru, &flux_data, revolutions, &index_offsets);
+                printf("Read done! - ");
+
+                samples2scp(&converted_data, &timing, flux_data, revolutions,
+                                                        index_offsets);
+                printf("Converted! - ");
+                free(flux_data);
+                free(index_offsets);
+
+                add_scp_track(file, i, converted_data, timing);
+                printf("Written\n");
+                free(timing);
+                free(converted_data);
+
+                if (i % 2) {
+                        pru_step_head(pru, 1);
+                        printf("Step!\n");
+                }
+        }
+        pru_stop_motor(pru);
+
         close_scp(file);
 
 
-        free(flux_data);
-        free(index_offsets);
-        free(timing);
-        free(converted_data);
         return 0;
 }
 
