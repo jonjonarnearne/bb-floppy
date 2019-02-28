@@ -261,7 +261,7 @@ int read_scp(int argc, char ** argv)
         uint8_t start_track = 0;
         uint8_t end_track = 159;
         uint8_t revolutions = 3;
-        uint32_t *flux_data;
+        uint32_t *samples;
         uint32_t *index_offsets;
         uint16_t *converted_data;
         struct scp_rev_timing *timing;
@@ -304,13 +304,13 @@ int read_scp(int argc, char ** argv)
                         pru_set_head_side(pru, PRU_HEAD_UPPER);
                 }
 
-                pru_read_timing(pru, &flux_data, revolutions, &index_offsets);
+                pru_read_timing(pru, &samples, revolutions, &index_offsets);
                 printf("Read done! - ");
 
-                samples2scp(&converted_data, &timing, flux_data, revolutions,
+                samples2scp(&converted_data, &timing, samples, revolutions,
                                                         index_offsets);
                 printf("Converted! - ");
-                free(flux_data);
+                free(samples);
                 free(index_offsets);
 
                 add_scp_track(file, i, converted_data, timing);
