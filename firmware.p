@@ -18,7 +18,7 @@
 #define PIN_DEBUG               r30.t15 // P8.11
 
 // Inputs
-#define PIN_READY               r31.t5  // P9.27
+#define PIN_CHANGE              r31.t5  // P9.27
 #define PIN_TRACK_ZERO          r31.t7  // P9.25
 #define PIN_READ_DATA           r31.t16 // P9.24
 #define PIN_INDEX               r31.t14 // P8.16

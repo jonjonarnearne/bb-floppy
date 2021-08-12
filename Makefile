@@ -1,14 +1,20 @@
 #http://www.cs.colby.edu/maxwell/courses/tutorials/maketutor/
 
 CFLAGS+= -Wall -O2 -mtune=cortex-a8 -march=armv7-a
-LIBS+= -lprussdrv
+LIBS+= -lprussdrv -lm
 PASM=/usr/bin/pasm
 P_LIBS=
 
 PROCESS=bb-process
 BIN=bb-floppy
 BUILD_DIR=./build
-SRCS=main.c pru-setup.c scp.c read_track_timing.c list.c
+SRCS=src/main.c \
+     src/pru-setup.c \
+     src/scp.c \
+     src/read_track_timing.c \
+     src/list.c \
+     src/read_flux.c \
+     src/flux_data.c
 P_SRCS=process.c
 
 FIRMWARE=$(BUILD_DIR)/firmware.bin
