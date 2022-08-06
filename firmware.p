@@ -1,7 +1,7 @@
 .origin 0
 .entrypoint START
 
-#include "arm-interface.h"
+#include "src/arm-interface.h"
 
 #define PRU0_ARM_INTERRUPT 19
 
@@ -803,6 +803,9 @@ fnGet_Erase:
         jmp  write_track.ret_addr                                               //  5ns
 .leave write_track_scope
 
+// Function
+// READ BIT TIMING
+//
 #define BREAK_ON_INDEX_PIN_LOW_FLAG   0
 #define INDEX_PIN_LOW_FLAG 1
 .struct Read_Bit_Timing
@@ -926,7 +929,11 @@ read_bit_timing_done:
         rcp  STACK.ret_addr, read_bit_timing.ret_addr
         jmp  STACK.ret_addr
 .leave read_bit_timing_scope
+// End Function
+// READ BIT TIMING
 
+// Function
+// WRITE BIT TIMING
 .struct Write_Bit_Timing
         .u16  timer
         .u16  ram_offset        // Position of write pointer
@@ -1042,7 +1049,11 @@ write_bit_timing_break_loop:
         rcp  STACK.ret_addr, write_bit_timing.ret_addr
         jmp  STACK.ret_addr
 .leave write_bit_timing_scope
+// End Function
+// WRITE BIT TIMING
 
+// Function
+// WRITE TIMING
 .struct Write_Timing
         .u16  timer
         .u16  ram_offset        // Position of write pointer
@@ -1263,6 +1274,8 @@ write_timing_timer_WEAK_HI_LOOP:
         
 .leave write_timing_scope
 
+// Function
+// READ TIMING
 .struct Read_Timing
         .u8   flags
         .u8   revolutions
@@ -1293,8 +1306,11 @@ fnRead_Timing:
         ldi  interface.argument, #64
 
 read_timing_set_revolutions:
+        // Setup revolutions target
         rcp  read_timing.revolutions, interface.argument
+        // clear revoultion counter
         rclr read_timing.revolution_count
+        //  Initialize ram offset.
         ldi  read_timing.rev_ram_offset, #0x2000
 
         // Read for 200.000.010 ns ~ 200.000us = 1.0revolutions.
@@ -1303,10 +1319,12 @@ read_timing_set_revolutions:
         ldi  read_timing.target_time.w2, #0x0065
 
 
+// First wait for INDEX to go high.
 read_timing_wait_index_high:
         M_CHECK_ABORT
         qbbc read_timing_wait_index_high, PIN_INDEX
 
+// Now wait for INDEX falling edge.
 read_timing_wait_index_falling:
         M_CHECK_ABORT
         qbbs read_timing_wait_index_falling, PIN_INDEX
@@ -1315,12 +1333,17 @@ read_timing_wait_index_falling:
 read_timing_LOOP:
         rclr read_timing.timer
 
+        // Wait for PIN PULSE. while increasing the counter
 read_timing_timer_TIME_LOW:
         inc  read_timing.timer
+        // Spin back to `read_timingin_timer_TIME_LOW` while the PIN is LOW
         qbbc read_timing_timer_TIME_LOW, PIN_READ_DATA
+        // The pin went high!
 read_timing_timer_TIME_HIGH:
         inc  read_timing.timer
+        // Spin back to `read_timingin_timer_TIME_HIGH` while the PIN is HIGH
         qbbs read_timing_timer_TIME_HIGH, PIN_READ_DATA
+        // The pin went low.
 
         // From here to the bottom of this functions,
         // we spend 300ns.

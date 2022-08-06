@@ -452,6 +452,18 @@ int write_track_timing(int argc, char ** argv)
                 // 135 + (sample * 10)
                 timing[i] = 400; // 01 = 2us bit-cell
         }
+
+        // 400 = 4.00 us
+        // 401 = 4.01 us == 0.010.000.000 ns
+        //
+        // SEC des cent mill (1000)  mikro (us) 1.000/000
+        // Millis       Micro           Nano
+        // 1/1.000      1/1.000.000     1/1.000.000.000
+        //
+        // 1 STD BitCell 2 Micro Sec
+        //              2.000.000 
+        //              200 = 2.000.000
+        //
         // 0x4489
         timing[500] = 400; 
         timing[501] = 800;
@@ -550,6 +562,7 @@ int write_track_timing(int argc, char ** argv)
 
 }
 
+void parse_timing_data(const uint16_t *timing, int sample_count);
 
 /* read for 200000us (one complete track,
  * and store timing information to file
@@ -568,12 +581,15 @@ int read_timing(int argc, char ** argv)
 	int sample_count, i, e, rc;
         struct mfm_sector_header *header, *h;
 
+        fprintf(stderr, "This command needs fixes - try read_flux or read_track_timing!");
+
         header = malloc(11 * sizeof(*header));
         if (!header) {
                 fprintf(stderr, "Couldn't allocate buffer mem!\n");
                 return 0;
         }
 
+#if 0
 	if (argc != 2) {
 		usage();
 		printf("You must give a filename to a timing file\n");
@@ -581,12 +597,14 @@ int read_timing(int argc, char ** argv)
 	}
 
 	fp = fopen(argv[1], "w");
+#endif
 
         pru_start_motor(pru);
 	pru_reset_drive(pru);
         pru_set_head_dir(pru, PRU_HEAD_INC);
 
-	for (i=0; i < 82 * 2; i++) {
+	//for (i=0; i < 82 * 2; i++) {
+	for (i=0; i < 2 * 2; i++) {
 		if (i & 1)
 			pru_set_head_side(pru, PRU_HEAD_LOWER);
 		else
@@ -600,8 +618,9 @@ int read_timing(int argc, char ** argv)
 		}
 
 		printf("Got %d samples\n", sample_count);
+#if 0
 		//rc = find_std_sector_headers(timing, sample_count, header, 11);
-        rc = 0;
+                rc = 0;
 		if (!rc) {
 			fprintf(stderr,
 			"Couldn't find any standard sectors in data stream!\n"
@@ -622,9 +641,13 @@ int read_timing(int argc, char ** argv)
 				h++;
 			}
 		}
+#endif
 
+#if 0
 		fwrite(&sample_count, sizeof(sample_count), 1, fp);
 		fwrite(timing, sizeof(*timing), sample_count, fp);
+#endif
+                parse_timing_data(timing, sample_count);
 
 		free(timing);
 
@@ -634,9 +657,25 @@ int read_timing(int argc, char ** argv)
         pru_stop_motor(pru);
 
 	free(header);
+#if 0
 	fclose(fp);
+#endif
 
         return 0;
+}
+
+/**
+ * @brief       Try to parse raw timing data for a single track as MFM data.
+ */
+void parse_timing_data(const uint16_t *timing, int sample_count)
+{
+        uint16_t max = 0;
+        for ( int i = 0; i < sample_count; i++ ) {
+                if (timing[i] > max) {
+                        max = timing[i] * 30;
+                }
+        }
+        printf("Max: %d\n", max);
 }
 
 int write_timing(int argc, char ** argv)

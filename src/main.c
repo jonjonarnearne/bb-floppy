@@ -656,7 +656,8 @@ int init_write_track(int argc, char ** argv)
 /* Move to track 40, and read the AMIGA_DOS identification track. */
 int init_identify(int argc, char ** argv)
 {
-	unsigned char *mfm_track = malloc(RAW_MFM_TRACK_SIZE);
+        printf("Mallock buffer for track data: %d bytes\n", RAW_MFM_TRACK_SIZE);
+	unsigned char *mfm_track = malloc(RAW_MFM_TRACK_SIZE * sizeof(int));
 	if (!mfm_track) return -1;
 
         pru_start_motor(pru);

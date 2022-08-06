@@ -1,6 +1,6 @@
 #http://www.cs.colby.edu/maxwell/courses/tutorials/maketutor/
 
-CFLAGS+= -Wall -O2 -mtune=cortex-a8 -march=armv7-a
+CFLAGS+= -Wall -O2 -mtune=cortex-a8 -march=armv7-a -std=c99 -D_POSIX_C_SOURCE=2
 LIBS+= -lprussdrv -lm
 PASM=/usr/bin/pasm
 P_LIBS=

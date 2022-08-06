@@ -252,9 +252,11 @@ void pru_read_raw_track(struct pru * pru, void * data, uint32_t len,
                 return;
         }
         if (len == 64) {
+                // Read an entire track
 	        intf->argument = 16;
                 len = 0x3000;
         } else {
+                // Just read this amount of sectors/bytes (?)
 	        intf->argument = len/4;
         }
 	intf->command = COMMAND_READ_SECTOR;
