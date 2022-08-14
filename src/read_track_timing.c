@@ -457,8 +457,10 @@ int write_track_timing(int argc, char ** argv)
         // 401 = 4.01 us == 0.010.000.000 ns
         //
         // SEC des cent mill (1000)  mikro (us) 1.000/000
-        // Millis       Micro           Nano
-        // 1/1.000      1/1.000.000     1/1.000.000.000
+        // VALUE        Millis       Micro      Nano
+        // 400          0.004        4          4000
+        //   1          0.00001      0.01         10
+        //
         //
         // 1 STD BitCell 2 Micro Sec
         //              2.000.000 

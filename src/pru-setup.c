@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <endian.h>
 
 #include <prussdrv.h>
 #include <pruss_intc_mapping.h>
@@ -12,8 +13,8 @@
 
 #define PRU_NUM0	0
 
-extern char _firmware_size[]		asm("_binary_firmware_bin_size");
-extern unsigned int firmware_data[]	asm("_binary_firmware_bin_start");
+extern char _firmware_size[]		__asm("_binary_firmware_bin_size");
+extern unsigned int firmware_data[]	__asm("_binary_firmware_bin_start");
 
 void hexdump(const void *b, size_t len)
 {
@@ -596,7 +597,17 @@ int pru_write_timing(struct pru * pru, uint16_t *source,
         return intf->read_count;
 }
 
-/* Read the timing of each bit from current track on floppy.
+/*
+ * @brief       Read X revolutions of timingdata from current track.
+ *
+ * @detail      The timing data is represented as units of 10 nano seconds.
+ *
+ * @param       pru             <IN>  This PRU object
+ * @param       timing_data     <OUT> The samples will be returned to this pointer.
+ * @param       revolutions     <IN>  The number of revolutions to read
+ * @param       rev_offsets     <OUT> Offfests in the samples array where each rev. is stored.
+ *
+ * Read the timing of each bit from current track on floppy.
  * The read will start from INDEX, and read <revolutions> revolutions.
  * The function will return the number of samples read,
  * and the <data> pointer will contain the samples.

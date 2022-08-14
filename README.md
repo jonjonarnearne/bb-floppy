@@ -7,3 +7,8 @@ The functions called pru_read_timing and pru_write_timing, which are
 the last functions to be added to this code seems to be the only ones
 that are almost working.
 
+## TO TEST:
+
+   $ echo "cape-bb-floppy" > $SLOTS
+   $ ./bb_floppy reset
+
