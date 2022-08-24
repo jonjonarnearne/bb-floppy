@@ -24,8 +24,8 @@ struct track_samples {
         struct sector_samples sectors[11];
 };
 
-static void samples_to_bitsream(struct track_samples *track);
-static void find_sync_marker(struct track_samples *track);
+static void samples_to_bitsream(struct track_samples *track, size_t index);
+static bool find_sync_marker(struct track_samples *track, size_t *index);
 
 int read_flux(int argc, char ** argv)
 {
@@ -75,8 +75,14 @@ int read_flux(int argc, char ** argv)
                 }
 
                 track.sample_count = pru_read_timing(pru, &track.samples, revolutions, &index_offsets);
-                find_sync_marker(&track);
-                samples_to_bitsream(&track);
+                size_t index = 0;
+                const bool found = find_sync_marker(&track, &index);
+                if ( found ) {
+                        printf("First sync found @ index: %lu\n", index);
+                        samples_to_bitsream(&track, index);
+                } else {
+                        fprintf(stderr, "No sync markers found in track %d - skipping\n", i);
+                }
                 
                 //r = revolutions - 1;
                 //flux_data = flux_data_init(samples, index_offsets[r], index_offsets, revolutions);
@@ -115,7 +121,7 @@ void hexdump(const void *b, size_t len);
 /**
  * @brief       Convert an array of timing values to an array of raw data
  */
-static void samples_to_bitsream(struct track_samples *track)
+static void samples_to_bitsream(struct track_samples *track, size_t index)
 {
         // Maximum bits per sample is 4.
         const int bit_count = track->sample_count * 4;
@@ -129,8 +135,27 @@ static void samples_to_bitsream(struct track_samples *track)
 
         printf("Timing to bitstream, allocated %d bytes for %d bits\n", byte_count, bit_count);
 
-        unsigned int bit = -1;
-        for (int i = 0; i < track->sample_count; i++) {
+        /**
+         * We start at bit -2 as this is what the bitstream will look like from
+         * the index we found for sync:
+         *
+         *     |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|
+         *    01010001001000100101000100100010010
+         *     |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|
+         *
+         * While the actual sync mark are the bits in the box.
+         *
+         *   xx|01000100100010010100010010001001|x
+         *
+         * Without the -2 here, the data will be offset by one bit.
+         *
+         * TODO:
+         * Investigate if we can set `bit` to 0 and just change 
+         * the index we return from find_sync_marker(...)
+         *
+         */
+        unsigned int bit = -2; // See Note ^^^
+        for (int i = index; i < track->sample_count; i++) {
                 if (track->samples[i] > 700) {
                         bit += 4;
                 } else if (track->samples[i] > 500) {
@@ -138,12 +163,13 @@ static void samples_to_bitsream(struct track_samples *track)
                 } else {
                         bit += 2;
                 }
-                bitstream[bit / 8] |= (1 << (bit % 8));
+                bitstream[bit / 8] |= (1 << (7 - (bit % 8)));
         }
 
-        //hexdump(bitstream, 512);
+        hexdump(bitstream, 512);
         printf("Timing to bitstream, conversion done for %d bits\n", bit);
 
+        printf("TODO: Decode the MFM bitstream now!\n");
         free(bitstream);
 }
 
@@ -153,10 +179,10 @@ static void samples_to_bitsream(struct track_samples *track)
  *              The pointers will point to the first sample of the sync marker
  *              in the sector.
  */
-static void find_sync_marker(struct track_samples *track)
+static bool find_sync_marker(struct track_samples *track, size_t *index)
 {
         /**
-         * A propper flux bit cell is mostly 4 bits.
+         * A the most bits between flux transitions is 4
          * There are only three valid flux values:
          *
          *      01      This is 4 micro-seconds
@@ -187,7 +213,7 @@ static void find_sync_marker(struct track_samples *track)
 
         int sector = 0;
 
-        for (int i = 0; i < track->sample_count; i++) {
+        for (int i = *index; i < track->sample_count; i++) {
                 if (track->samples[i] > 700) {
                         ring_buffer[i % 10] = MS8;
                 } else if (track->samples[i] > 500) {
@@ -200,7 +226,7 @@ static void find_sync_marker(struct track_samples *track)
                 // Wait until the ringbuffer is full before we start comparing.
                 if (r_index < 0) continue;
 
-                bool found = true;;
+                bool found = true;
                 for (int e = 0; e < 10; e++) {
                         if (sync[e] != ring_buffer[(r_index + e) % 10]) {
                                 found = false;
@@ -208,6 +234,9 @@ static void find_sync_marker(struct track_samples *track)
                         }
                 }
                 if (found) {
+                        *index = i - 10;
+                        return true;
+
                         if (sector >= 11) {
                                 // Current implementation only expects 11 sectors!
                                 fprintf(stderr,
@@ -224,4 +253,5 @@ static void find_sync_marker(struct track_samples *track)
                         sector++;
                 }
         }
+        return false;
 }
