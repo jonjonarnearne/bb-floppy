@@ -26,56 +26,55 @@ struct track_samples {
         struct sector_samples sectors[11];
 };
 
+struct amiga_sector {
+        uint32_t header_info;
+        uint32_t header_sector_label[4];
+        uint32_t *data;
+        bool header_checksum_ok;
+        bool data_checksum_ok;
+};
+
 static bool find_sync_marker(struct track_samples *track, size_t *index);
 static uint8_t *samples_to_bitsream(struct track_samples *track, size_t index, size_t *byte_count);
-static void parse_amiga_mfm_sector(const uint8_t *bitstream, size_t byte_count, WINDOW *w);
+static int parse_amiga_mfm_sector(const uint8_t *bitstream, size_t byte_count,
+                                        struct amiga_sector *parsed_sector);
 
 int read_flux(int argc, char ** argv)
 {
-        int i, r, opt, filename_index = 0;
-        uint8_t start_track = 0;
-        uint8_t end_track = 159;
         uint8_t revolutions = 1;
         uint32_t *index_offsets;
-        uint16_t *converted_data;
-        struct scp_rev_timing *timing;
-        struct flux_data *flux_data;
 
-        while((opt = getopt(argc, argv, "-r:")) != -1) {
-                switch(opt) {
-                case 'r':
-                        revolutions = strtol(optarg, NULL, 0);
-                        if (revolutions < 1) revolutions = 1;
-                        if (revolutions > 64) revolutions = 64;
-                        break;
-                case 1:
-                        filename_index = optind - 1;
-                }
-        }
-
-#if 0
-        if (!filename_index) {
-                fprintf(stderr,
-                        "You must specify a filename for the scp file\n");
-                return -1;
-        }
-#endif
         initscr();
         start_color();
         raw();
         keypad(stdscr, TRUE);
         noecho();
 
+        init_pair(1, COLOR_BLACK, COLOR_WHITE); // Inverted for statusbar
+        init_pair(2, COLOR_GREEN, COLOR_GREEN); // Good sector.
+        init_pair(3, COLOR_CYAN, COLOR_CYAN); // Bad header
+        init_pair(4, COLOR_YELLOW, COLOR_YELLOW); // Bad data
+        init_pair(5, COLOR_RED, COLOR_RED); // Both bad
+
         int row, col;
         getmaxyx(stdscr,row,col);
 
-        WINDOW *status_window_border = newwin(22 /* height */, col /* width */,
-                                        row - 22 /* start row */, 0 /* start col */);
-        box(status_window_border, 0, 0);
-        wrefresh(status_window_border);
+        WINDOW *log_window = newwin(row - 1 /* height */, 40/* width */,
+                                        0 /* start row */, col - 40 /* start col */);
+        box(log_window, 0, 0);
+        wrefresh(log_window);
 
-        WINDOW *status_window = newwin(20 /* height */, col - 2/* width */,
-                                        row - 21 /* start row */, 1 /* start col */);
+        WINDOW *sector_window = newwin(row - 1 /* height */, col - 41 /* width */,
+                                       0 /* start row */, 0 /* start col */);
+
+        box(sector_window, 0, 0);
+        wrefresh(sector_window);
+
+        WINDOW *status_bar = newwin(1 /* height */, col /* width */,
+                                        row - 1 /* start row */, 0 /* start col */);
+        wattron(status_bar, A_REVERSE);
+        wbkgd(status_bar, COLOR_PAIR(1));
+        wrefresh(status_bar);
 
 
         pru_start_motor(pru);
@@ -87,23 +86,28 @@ int read_flux(int argc, char ** argv)
         struct track_samples track = {0};
 
 
-        for (i = 0; i < 2; i++) {
+        for (unsigned int i = 0; i < 3; i++) {
                 pru_set_head_side(pru, i & 1 ? PRU_HEAD_LOWER : PRU_HEAD_UPPER);
 
-                wclear(status_window);
-                mvwprintw(status_window, 0, 0, "Read track: %d, head: %d", i >> 1, i & 1);
-                wrefresh(status_window);
+                werase(status_bar);
+                mvwprintw(status_bar, 0, 10, "Read track: %d, head: %d", i >> 1, i & 1);
+                wrefresh(status_bar);
+
+                werase(log_window);
+                box(log_window, 0, 0);
+                wrefresh(log_window);
 
                 track.sample_count = pru_read_timing(pru, &track.samples, revolutions, &index_offsets);
                 size_t index = 0;
+                struct amiga_sector sector;
 
                 for (unsigned int sect = 0; sect < 11; ++sect) {
-                        mvwprintw(status_window, 1, 0, "------------ Look for sector sync %d ---------------- ", sect);
-                        wrefresh(status_window);
+                        wprintw(log_window, "------------ Look for sector sync %d ----------------\n", sect);
+                        wrefresh(log_window);
 
                         if ( find_sync_marker(&track, &index) ) {
-                                mvwprintw(status_window, 2, 0, "sync found @ index: %u\n", index);
-                                wrefresh(status_window);
+                                wprintw(log_window, "sync found @ index: %u\n", index);
+                                wrefresh(log_window);
                                 size_t byte_count = 0;
                                 uint8_t *bitstream = samples_to_bitsream(&track, index, &byte_count);
                                 if (!bitstream) {
@@ -111,20 +115,58 @@ int read_flux(int argc, char ** argv)
                                         break;
                                 }
 
-                                parse_amiga_mfm_sector(bitstream, byte_count, status_window);
+                                int rc = parse_amiga_mfm_sector(bitstream, byte_count, &sector);
+                                if (rc == 0) {
+                                        const uint8_t track_no = (be32toh(sector.header_info) >> 16) & 0xff;
+                                        const uint8_t sector_no = (be32toh(sector.header_info) >> 8) & 0xff;
+                                        const uint8_t sector_to_gap = be32toh(sector.header_info) & 0xff;
+                                        //wprintw(w, "-- [I] Track: %d - head: %d\n", track_info >> 1, track_info & 1);
+                                        uint8_t sector_status = 0;
+                                        if (!sector.data_checksum_ok) {
+                                                sector_status |= 2;
+                                        }
+                                        if (!sector.header_checksum_ok) {
+                                                sector_status |= 1;
+                                        }
+                                        int color = COLOR_PAIR(2); // Green
+                                        switch(sector_status) {
+                                        case 1:
+                                                // Header bad
+                                                color = COLOR_PAIR(3); // Cyan
+                                                break;
+                                        case 2:
+                                                // Data bad
+                                                color = COLOR_PAIR(4); // Yellow
+                                                break;
+                                        case 3:
+                                                // Both bad
+                                                color = COLOR_PAIR(5); // Red
+                                                break;
+                                        default:
+                                                break;
+                                        }
+
+                                        mvwaddch(sector_window,
+                                                 1 + sector_no + ((track_no & 1) ? 15 : 0),  /* ROW */
+                                                 1 + (track_no >> 1), /* COL */
+                                                ' ' | A_REVERSE | color);
+                                        wrefresh(sector_window);
+                                        free(sector.data);
+                                }
 
                                 free(bitstream);
+
                                 index += 10;
                         } else {
                                 //fprintf(stderr, "\t\tNo sync markers found in track %d - skipping\n", i);
                                 break;
                         }
-                        wprintw(status_window, "Sector %d done!", sect);
-                        wrefresh(status_window);
+                        wprintw(log_window, "Sector %d done!\n", sect);
+                        wrefresh(log_window);
                 }
 
-                wprintw(status_window, " ---------------- Track Done ---------------------");
-                wrefresh(status_window);
+                wprintw(log_window, " ---------------- Track Done ---------------------\n");
+                wrefresh(log_window);
                 
                 //r = revolutions - 1;
                 //flux_data = flux_data_init(samples, index_offsets[r], index_offsets, revolutions);
@@ -150,21 +192,24 @@ int read_flux(int argc, char ** argv)
 
                 if (i % 2) {
                         pru_step_head(pru, 1);
-                        wprintw(status_window, "Step head!");
-                        wrefresh(status_window);
+                        wprintw(log_window, "Step head!");
+                        wrefresh(log_window);
                 }
                 //flux_data_free(flux_data);
         }
         pru_stop_motor(pru);
 
-        mvwprintw(status_window, 10, 2, "DONE!");
-        wrefresh(status_window);
+        mvwprintw(log_window, 10, 2, "DONE!");
+        wrefresh(log_window);
 
-        wgetch(status_window);
+        wgetch(log_window);
 
-        delwin(status_window_border);
-        delwin(status_window);
+        delwin(log_window);
+        delwin(sector_window);
+        delwin(status_bar);
         endwin();
+
+        //printf("ROWS: %d, COLS: %d\n", row, col);
 
         return 0;
 }
@@ -188,17 +233,27 @@ struct amiga_sector_header_mfm {
          */
 };
 
-struct amiga_sector_header {
-        uint32_t info;
-        uint32_t sector_label[4];
-};
-
-static void parse_amiga_mfm_sector(const uint8_t *bitstream, size_t byte_count, WINDOW *w)
+/**
+ * @brief       Try to parse a bitstream into an amiga standard sector.
+ *
+ * @detail      We expect that the bitstream is aligned so it starts on
+ *              the standard amiga sector marker (0x4489 0x4489).
+ *
+ * @param       bitstream       The bitstream to parse
+ * @param       byte_count      The length of the bitstream
+ * @param       parsed_sector   This struct is populated with the parsed data.
+ *
+ * @return      Return 0 on success, any negative number is an error.
+ */
+static int parse_amiga_mfm_sector(const uint8_t *bitstream, size_t byte_count,
+                                        struct amiga_sector *parsed_sector)
 {
+        memset(parsed_sector, 0x00, sizeof(*parsed_sector));
+
         if (byte_count < 1068) {
                 fprintf(stderr, "Sector is not a standard amiga sector! - Expected 1068 bytes, found %u bytes.\n",
                                                                 byte_count);
-                return;
+                return -1;
         }
 
         struct amiga_sector_header_mfm mfm_header;
@@ -207,14 +262,9 @@ static void parse_amiga_mfm_sector(const uint8_t *bitstream, size_t byte_count, 
         memcpy(&mfm_header.mfm_4489, bitstream + stream_position, sizeof(mfm_header.mfm_4489));
         stream_position += sizeof mfm_header.mfm_4489;
 
-        /*
-        wprintw(w, "MFM Header 0x%04x 0x%04x", be16toh(mfm_header.mfm_4489[0]),
-                                             be16toh(mfm_header.mfm_4489[1]));
-        wrefresh(w);
-        */
         if ( be16toh(mfm_header.mfm_4489[0]) != 0x4489 || be16toh(mfm_header.mfm_4489[1]) != 0x4489 ) {
                 fprintf(stderr, "Sector is not a standard amiga sector! - Missing sector header (0x4489)\n");
-                return;
+                return -2;
         }
 
         memcpy(&mfm_header.info_odd, bitstream + stream_position,
@@ -238,46 +288,43 @@ static void parse_amiga_mfm_sector(const uint8_t *bitstream, size_t byte_count, 
                                         sizeof(mfm_header.header_checksum_even));
         stream_position += sizeof mfm_header.header_checksum_even;
 
+        memcpy(&mfm_header.data_checksum_odd, bitstream + stream_position,
+                                        sizeof(mfm_header.data_checksum_odd));
+        stream_position += sizeof mfm_header.data_checksum_odd;
+        memcpy(&mfm_header.data_checksum_even, bitstream + stream_position,
+                                        sizeof(mfm_header.data_checksum_even));
+        stream_position += sizeof mfm_header.data_checksum_even;
+
 
         static const uint32_t mask = 0x55555555; // (0b01010101)
+
+        parsed_sector->header_info = mfm_header.info_odd & mask;
+        parsed_sector->header_info <<= 1;
+        parsed_sector->header_info |= mfm_header.info_even & mask;
+
         uint32_t calculated_checksum = 0;
-
-        struct amiga_sector_header header;
-
-        header.info = mfm_header.info_odd & mask;
-        header.info <<= 1;
-        header.info |= mfm_header.info_even & mask;
-
-        //wprintw(w, "-- [I] Sector info: 0x%08x", be32toh(header.info));
-        uint8_t track_info = (be32toh(header.info) >> 16) & 0xff;
-        //wprintw(w, "-- [I] Track: %d - head: %d", track_info >> 1, track_info & 1);
-        //wrefresh(w);
-
         calculated_checksum ^= mfm_header.info_odd;
         calculated_checksum ^= mfm_header.info_even;
 
         for ( unsigned int i = 0; i < 4; ++i) {
-                header.sector_label[i] = mfm_header.sector_label_odd[i] & mask;
-                header.sector_label[i] <<= 1;
-                header.sector_label[i] |= mfm_header.sector_label_even[i] & mask;
+                parsed_sector->header_sector_label[i] = mfm_header.sector_label_odd[i] & mask;
+                parsed_sector->header_sector_label[i] <<= 1;
+                parsed_sector->header_sector_label[i] |= mfm_header.sector_label_even[i] & mask;
 
                 calculated_checksum ^= mfm_header.sector_label_odd[i];
                 calculated_checksum ^= mfm_header.sector_label_even[i];
         }
 
-        uint32_t chksum = mfm_header.header_checksum_odd & mask;
-        chksum <<= 1;
-        chksum |= mfm_header.header_checksum_even & mask;
+        calculated_checksum ^= mfm_header.header_checksum_odd;
+        calculated_checksum ^= mfm_header.header_checksum_even;
+        calculated_checksum &= mask;
         
-        if ((calculated_checksum & mask) != chksum) {
-                //wprintw(w, "-- [W] Bad header checksum!");
-                //wrefresh(w);
-        }
+        parsed_sector->header_checksum_ok = calculated_checksum == 0 ? true : false;
 
         uint32_t *sector_data = malloc(1024);
         if (!sector_data) {
                 fprintf(stderr, "\t\t -- [E] Could not allocate data buffer for sector data!\n");
-                return;
+                return -4;
         }
         memcpy(sector_data, bitstream + stream_position, 1024);
         stream_position += 1024;
@@ -288,20 +335,18 @@ static void parse_amiga_mfm_sector(const uint8_t *bitstream, size_t byte_count, 
                 calculated_checksum ^= sector_data[i + (512/4)];
 
                 sector_data[i] &= mask;
-                sector_data[i] |= (sector_data[i + (512 / 4)] & mask) << 1;
+                sector_data[i] <<= 1;
+                sector_data[i] |= sector_data[i + (512 / 4)] & mask;
         }
 
-        chksum = mfm_header.data_checksum_odd & mask;
-        chksum <<= 1;
-        chksum |= mfm_header.data_checksum_even & mask;
-        
-        if ((calculated_checksum & mask) != chksum) {
-                //wprintw(w, "-- [W] Bad data checksum!");
-                //wrefresh(w);
-        }
+        calculated_checksum ^= mfm_header.data_checksum_odd;
+        calculated_checksum ^= mfm_header.data_checksum_even;
+        calculated_checksum &= mask;
 
-        //hexdump(sector_data, 512);
-        free(sector_data);
+        parsed_sector->data_checksum_ok = calculated_checksum == 0 ? true : false;
+
+        parsed_sector->data = sector_data;
+        return 0;
 }
 
 /**
