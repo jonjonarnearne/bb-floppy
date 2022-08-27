@@ -6,6 +6,7 @@
 #include <endian.h>
 #include <time.h>
 #include <unistd.h>
+#include <ncurses.h>
 
 #include "pru-setup.h"
 #include "flux_data.h"
@@ -26,8 +27,8 @@ struct track_samples {
 };
 
 static bool find_sync_marker(struct track_samples *track, size_t *index);
-static void samples_to_bitsream(struct track_samples *track, size_t index);
-static void parse_amiga_mfm_sector(const uint8_t *bitstream, size_t byte_count);
+static uint8_t *samples_to_bitsream(struct track_samples *track, size_t index, size_t *byte_count);
+static void parse_amiga_mfm_sector(const uint8_t *bitstream, size_t byte_count, WINDOW *w);
 
 int read_flux(int argc, char ** argv)
 {
@@ -59,6 +60,23 @@ int read_flux(int argc, char ** argv)
                 return -1;
         }
 #endif
+        initscr();
+        start_color();
+        raw();
+        keypad(stdscr, TRUE);
+        noecho();
+
+        int row, col;
+        getmaxyx(stdscr,row,col);
+
+        WINDOW *status_window_border = newwin(22 /* height */, col /* width */,
+                                        row - 22 /* start row */, 0 /* start col */);
+        box(status_window_border, 0, 0);
+        wrefresh(status_window_border);
+
+        WINDOW *status_window = newwin(20 /* height */, col - 2/* width */,
+                                        row - 21 /* start row */, 1 /* start col */);
+
 
         pru_start_motor(pru);
         pru_reset_drive(pru);
@@ -68,32 +86,45 @@ int read_flux(int argc, char ** argv)
 
         struct track_samples track = {0};
 
+
         for (i = 0; i < 2; i++) {
-                printf("Read track: %d, head: %d\n", i >> 1, i & 1);
-                if (i % 2) {
-                        pru_set_head_side(pru, PRU_HEAD_LOWER);
-                } else {
-                        pru_set_head_side(pru, PRU_HEAD_UPPER);
-                }
+                pru_set_head_side(pru, i & 1 ? PRU_HEAD_LOWER : PRU_HEAD_UPPER);
+
+                wclear(status_window);
+                mvwprintw(status_window, 0, 0, "Read track: %d, head: %d", i >> 1, i & 1);
+                wrefresh(status_window);
 
                 track.sample_count = pru_read_timing(pru, &track.samples, revolutions, &index_offsets);
                 size_t index = 0;
 
                 for (unsigned int sect = 0; sect < 11; ++sect) {
-                        printf("\n ------------ Look for sector %d ---------------- \n", sect);
-                        const bool found = find_sync_marker(&track, &index);
-                        if ( found ) {
-                                printf("sync found @ index: %u\n", index);
-                                samples_to_bitsream(&track, index);
+                        mvwprintw(status_window, 1, 0, "------------ Look for sector sync %d ---------------- ", sect);
+                        wrefresh(status_window);
+
+                        if ( find_sync_marker(&track, &index) ) {
+                                mvwprintw(status_window, 2, 0, "sync found @ index: %u\n", index);
+                                wrefresh(status_window);
+                                size_t byte_count = 0;
+                                uint8_t *bitstream = samples_to_bitsream(&track, index, &byte_count);
+                                if (!bitstream) {
+                                        fprintf(stderr, "\t\tBitstream buffer allocation failed!\n");
+                                        break;
+                                }
+
+                                parse_amiga_mfm_sector(bitstream, byte_count, status_window);
+
+                                free(bitstream);
                                 index += 10;
                         } else {
-                                fprintf(stderr, "No sync markers found in track %d - skipping\n", i);
+                                //fprintf(stderr, "\t\tNo sync markers found in track %d - skipping\n", i);
                                 break;
                         }
-                        printf("Sector %d done!\n", sect);
+                        wprintw(status_window, "Sector %d done!", sect);
+                        wrefresh(status_window);
                 }
 
-                printf(" ---------------- Track Done ---------------------\n");
+                wprintw(status_window, " ---------------- Track Done ---------------------");
+                wrefresh(status_window);
                 
                 //r = revolutions - 1;
                 //flux_data = flux_data_init(samples, index_offsets[r], index_offsets, revolutions);
@@ -119,11 +150,21 @@ int read_flux(int argc, char ** argv)
 
                 if (i % 2) {
                         pru_step_head(pru, 1);
-                        printf("\t\t Step head!\n");
+                        wprintw(status_window, "Step head!");
+                        wrefresh(status_window);
                 }
                 //flux_data_free(flux_data);
         }
         pru_stop_motor(pru);
+
+        mvwprintw(status_window, 10, 2, "DONE!");
+        wrefresh(status_window);
+
+        wgetch(status_window);
+
+        delwin(status_window_border);
+        delwin(status_window);
+        endwin();
 
         return 0;
 }
@@ -152,7 +193,7 @@ struct amiga_sector_header {
         uint32_t sector_label[4];
 };
 
-static void parse_amiga_mfm_sector(const uint8_t *bitstream, size_t byte_count)
+static void parse_amiga_mfm_sector(const uint8_t *bitstream, size_t byte_count, WINDOW *w)
 {
         if (byte_count < 1068) {
                 fprintf(stderr, "Sector is not a standard amiga sector! - Expected 1068 bytes, found %u bytes.\n",
@@ -166,8 +207,11 @@ static void parse_amiga_mfm_sector(const uint8_t *bitstream, size_t byte_count)
         memcpy(&mfm_header.mfm_4489, bitstream + stream_position, sizeof(mfm_header.mfm_4489));
         stream_position += sizeof mfm_header.mfm_4489;
 
-        printf("MFM Header 0x%04x 0x%04x\n", be16toh(mfm_header.mfm_4489[0]),
+        /*
+        wprintw(w, "MFM Header 0x%04x 0x%04x", be16toh(mfm_header.mfm_4489[0]),
                                              be16toh(mfm_header.mfm_4489[1]));
+        wrefresh(w);
+        */
         if ( be16toh(mfm_header.mfm_4489[0]) != 0x4489 || be16toh(mfm_header.mfm_4489[1]) != 0x4489 ) {
                 fprintf(stderr, "Sector is not a standard amiga sector! - Missing sector header (0x4489)\n");
                 return;
@@ -200,37 +244,39 @@ static void parse_amiga_mfm_sector(const uint8_t *bitstream, size_t byte_count)
 
         struct amiga_sector_header header;
 
-        header.info = mfm_header.info_even & mask;
+        header.info = mfm_header.info_odd & mask;
         header.info <<= 1;
-        header.info |= mfm_header.info_odd & mask;
+        header.info |= mfm_header.info_even & mask;
 
-        printf("Sector info: 0x%08x\n", be32toh(header.info));
+        //wprintw(w, "-- [I] Sector info: 0x%08x", be32toh(header.info));
         uint8_t track_info = (be32toh(header.info) >> 16) & 0xff;
-        printf("\tTrack: %d - head: %d\n", track_info >> 1, track_info & 1);
+        //wprintw(w, "-- [I] Track: %d - head: %d", track_info >> 1, track_info & 1);
+        //wrefresh(w);
 
         calculated_checksum ^= mfm_header.info_odd;
         calculated_checksum ^= mfm_header.info_even;
 
         for ( unsigned int i = 0; i < 4; ++i) {
-                header.sector_label[i] = mfm_header.sector_label_even[i] & mask;
+                header.sector_label[i] = mfm_header.sector_label_odd[i] & mask;
                 header.sector_label[i] <<= 1;
-                header.sector_label[i] |= mfm_header.sector_label_odd[i] & mask;
+                header.sector_label[i] |= mfm_header.sector_label_even[i] & mask;
 
                 calculated_checksum ^= mfm_header.sector_label_odd[i];
                 calculated_checksum ^= mfm_header.sector_label_even[i];
         }
 
-        calculated_checksum ^= mfm_header.header_checksum_even;
-        calculated_checksum ^= mfm_header.header_checksum_odd;
-        calculated_checksum &= mask;
-        if (calculated_checksum) {
-                fprintf(stderr, "Amiga sector header checksum error!\n");
-                return;
+        uint32_t chksum = mfm_header.header_checksum_odd & mask;
+        chksum <<= 1;
+        chksum |= mfm_header.header_checksum_even & mask;
+        
+        if ((calculated_checksum & mask) != chksum) {
+                //wprintw(w, "-- [W] Bad header checksum!");
+                //wrefresh(w);
         }
 
         uint32_t *sector_data = malloc(1024);
         if (!sector_data) {
-                fprintf(stderr, "Could not allocate data buffer for sector data!\n");
+                fprintf(stderr, "\t\t -- [E] Could not allocate data buffer for sector data!\n");
                 return;
         }
         memcpy(sector_data, bitstream + stream_position, 1024);
@@ -244,13 +290,14 @@ static void parse_amiga_mfm_sector(const uint8_t *bitstream, size_t byte_count)
                 sector_data[i] &= mask;
                 sector_data[i] |= (sector_data[i + (512 / 4)] & mask) << 1;
         }
-        calculated_checksum ^= mfm_header.data_checksum_odd;
-        calculated_checksum ^= mfm_header.data_checksum_even;
-        calculated_checksum &= mask;
-        if (calculated_checksum) {
-                fprintf(stderr, "Amiga sector data checksum error!\n");
-                //free(sector_data);
-                //return;
+
+        chksum = mfm_header.data_checksum_odd & mask;
+        chksum <<= 1;
+        chksum |= mfm_header.data_checksum_even & mask;
+        
+        if ((calculated_checksum & mask) != chksum) {
+                //wprintw(w, "-- [W] Bad data checksum!");
+                //wrefresh(w);
         }
 
         //hexdump(sector_data, 512);
@@ -260,19 +307,21 @@ static void parse_amiga_mfm_sector(const uint8_t *bitstream, size_t byte_count)
 /**
  * @brief       Convert an array of timing values to an array of raw data
  */
-static void samples_to_bitsream(struct track_samples *track, size_t index)
+static uint8_t *samples_to_bitsream(struct track_samples *track, size_t index, size_t *_byte_count)
 {
+        *_byte_count = 0; // return paramater.
+
         // Maximum bits per sample is 4.
         const int bit_count = track->sample_count * 4;
         const int byte_count = 1 + (bit_count / 8);
         uint8_t *bitstream = malloc(byte_count);
         if (!bitstream) {
                 fprintf(stderr, "%s: malloc failed!\n", __func__);
-                return;
+                return NULL;
         }
         memset(bitstream, 0x00, byte_count);
 
-        printf("Timing to bitstream, allocated %d bytes for %d bits\n", byte_count, bit_count);
+        //printf("Timing to bitstream, allocated %d bytes for %d bits\n", byte_count, bit_count);
 
         /**
          * We start at bit -2 as this is what the bitstream will look like from
@@ -306,11 +355,9 @@ static void samples_to_bitsream(struct track_samples *track, size_t index)
         }
 
         //hexdump(bitstream, 512);
-        printf("Timing to bitstream, conversion done for %d bits\n", bit);
-
-        parse_amiga_mfm_sector(bitstream, byte_count);
-
-        free(bitstream);
+        //printf("Timing to bitstream, conversion done for %d bits\n", bit);
+        *_byte_count = byte_count;
+        return bitstream;
 }
 
 /**
@@ -351,7 +398,7 @@ static bool find_sync_marker(struct track_samples *track, size_t *index)
          */
         enum sample_type ring_buffer[10] = {UNDEF};
 
-        int sector = 0;
+        //int sector = 0;
 
         for (int i = *index; i < track->sample_count; i++) {
                 if (track->samples[i] > 700) {
@@ -376,7 +423,7 @@ static bool find_sync_marker(struct track_samples *track, size_t *index)
                 if (found) {
                         *index = i - 10;
                         return true;
-
+                        /*
                         if (sector >= 11) {
                                 // Current implementation only expects 11 sectors!
                                 fprintf(stderr,
@@ -391,6 +438,7 @@ static bool find_sync_marker(struct track_samples *track, size_t *index)
                                                                 sector + 1, i);
                         }
                         sector++;
+                        */
                 }
         }
         return false;
