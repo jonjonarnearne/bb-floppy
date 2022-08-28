@@ -12,6 +12,7 @@
 #include "read_track_timing.h"
 #include "scp.h"
 #include "read_flux.h"
+#include "write_flux.h"
 
 #define min(a,b) ((a < b) ? a : b)
 #define max(a,b) ((a > b) ? a : b)
@@ -741,6 +742,7 @@ static const struct modes {
                                                             write_track_timing },
         { "test_track_0", "Return 1 if we are at track 0", test_track_0 },
         { "read_flux", "Read and check raw flux data", read_flux },
+        { "write_flux", "Write flux data to disk", write_flux },
         { NULL, NULL }
 };
 

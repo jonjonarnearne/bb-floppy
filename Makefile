@@ -1,6 +1,6 @@
 #http://www.cs.colby.edu/maxwell/courses/tutorials/maketutor/
 
-CFLAGS+= -Wall -O2 -mtune=cortex-a8 -march=armv7-a -D_POSIX_C_SOURCE=2 -D_BSD_SOURCE=1 -std=c99
+CFLAGS+= -Wall -O2 -mtune=cortex-a8 -march=armv7-a -D_POSIX_C_SOURCE=2 -D_BSD_SOURCE=1 -std=c11 -Wall -pedantic -Werror
 LIBS+= -lprussdrv -lm -lncurses
 PASM=/usr/bin/pasm
 P_LIBS=
@@ -13,8 +13,10 @@ SRCS=src/main.c \
      src/scp.c \
      src/read_track_timing.c \
      src/list.c \
+     src/flux_data.c \
      src/read_flux.c \
-     src/flux_data.c
+     src/write_flux.c \
+     src/caps_parser/caps_parser.c
 P_SRCS=process.c
 
 FIRMWARE=$(BUILD_DIR)/firmware.bin
