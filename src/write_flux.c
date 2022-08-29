@@ -40,6 +40,7 @@ int write_flux(int argc, char ** argv)
                 );
 
         caps_parser_show_file_info(parser);
+        caps_parser_show_track_info(parser);
 
         caps_parser_cleanup(parser);
 caps_init_failed:
