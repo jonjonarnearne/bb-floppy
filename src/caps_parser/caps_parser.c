@@ -1,11 +1,21 @@
-#include <stdlib.h>
-#include <stdbool.h>
 #include <assert.h>
 #include <endian.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <string.h>
 
 #include "caps_parser.h"
 
-static const char *platform_to_string(uint32_t platform_id);
+static const char __attribute__((__unused__)) * platform_to_string(
+                                                        uint32_t platform_id);
+static const char __attribute__((__unused__)) * dentype_to_string(
+                                                        uint32_t dentype);
+static void __attribute__((__unused__)) print_caps_image(
+                                                struct CapsImage *caps_image);
+static bool __attribute__((__unused__)) caps_parser_read_caps_image_from_node(
+                                struct caps_parser *p, struct caps_node *node,
+                                                struct CapsImage *caps_image);
 
 struct caps_parser *caps_parser_init(FILE *fp)
 {
@@ -111,8 +121,13 @@ void caps_parser_show_file_info(struct caps_parser *p)
 
         printf("Found INFO chunk! at file offset: %ld\n", node->fpos);
         struct CapsInfo capsinfo;
-        fseek(p->fp, node->fpos, SEEK_SET);
-        int rc = fread(&capsinfo, sizeof capsinfo, 1, p->fp);
+        int rc = fseek(p->fp, node->fpos, SEEK_SET);
+        if (rc != 0) {
+                fprintf(stderr, "Failed to seek in file, error: %s\n",
+                                                        strerror(errno));
+                return;
+        }
+        rc = fread(&capsinfo, sizeof capsinfo, 1, p->fp);
         if (rc != 1) {
                 fprintf(stderr, "Failed to read capsinfo block from file!\n");
                 return;
@@ -157,29 +172,111 @@ void caps_parser_show_file_info(struct caps_parser *p)
         printf("*------------------------------------------------------------------------\n");
 }
 
-void caps_parser_show_track_info(struct caps_parser *p)
+/**
+ * @brief       Print info about a track
+ *
+ * @detail      This is stored under the IMGE header.
+ */
+void caps_parser_show_track_info(struct caps_parser *p, unsigned int cylinder,
+                                                        unsigned char head)
 {
+        static_assert(sizeof(struct CapsImage) == 68,
+                                        "CapsImage size assertion failed!");
+        static const size_t expected_len = sizeof(struct CapsImage)
+                                         + sizeof(struct caps_header);
+
+        unsigned int count = 0;
+        struct CapsImage caps_image;
         struct caps_node *node = p->caps_list_head.next;
-        unsigned int chunks = 0;
-        unsigned int found = 0;
         while(node) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmultichar"
                 if (node->header.name == 'IMGE') {
 #pragma GCC diagnostic pop
-                        found++;
+                        if (node->header.len != expected_len)  {
+                                fprintf(stderr,
+                                        "Bad IMGE size, expected %u bytes, got %u bytes!\n",
+                                        expected_len, node->header.len);
+                                count++;
+                                goto next_node;
+                        }
+                        bool rc = caps_parser_read_caps_image_from_node(
+                                                        p, node, &caps_image);
+                        if (!rc) {
+                                fprintf(stderr, "Failed to read at node: %u\n",
+                                                                        count);
+                                break;
+                        }
+                        if (be32toh(caps_image.cylinder) != cylinder ||
+                            be32toh(caps_image.head) != head) {
+                                // Keep looking
+                                count++;
+                                goto next_node;
+                        }
+
+                        // Done!
+                        print_caps_image(&caps_image);
+                        return;
                 }
+next_node:
                 node = node->next;
-                chunks++;
-        }
-        if (!found) {
-                printf("No IMGE chunk found in IPS data! searched %d chunks!\n", chunks);
-                return;
         }
 
-        printf("Found %d tracks\n", found);
+        // We only drop out of this loop if we dindn't find what we was looking for!
+        fprintf(stderr, "Could not find IMGE data for cyl: %u head: %u\n",
+                                                        cylinder, head);
 }
 
+static bool caps_parser_read_caps_image_from_node( struct caps_parser *p,
+                        struct caps_node *node, struct CapsImage *caps_image)
+{
+        int rc = fseek(p->fp, node->fpos, SEEK_SET);
+        if (rc != 0) {
+                fprintf(stderr,
+                        "Failed to seek in disk image, error: %s\n",
+                                                        strerror(errno));
+                return false;
+        }
+
+        rc = fread(caps_image, sizeof(*caps_image), 1, p->fp);
+        if (rc != 1) {
+                fprintf(stderr, "Failed to read from disk\n");
+                return false;              
+        }
+
+        return true;
+}
+
+/**
+ * @brief       Private function to give details of CapsImage
+ */
+static void print_caps_image(struct CapsImage *caps_image)
+{
+        printf("*------------------------------------------------------------------------\n");
+        printf("|                                CapsImage:\n");
+        printf("*------------------------------------------------------------------------\n");
+        printf("| Cylinder: %u\n", be32toh(caps_image->cylinder));
+        printf("| Head: %u\n", be32toh(caps_image->head));
+        printf("| Dentype: %s\n", dentype_to_string(be32toh(caps_image->dentype)));
+        printf("| Sigtype: %s\n", be32toh(caps_image->sigtype) == 1 ? "2 us cell" : "N/A");
+        printf("| Track Size, rounded: %u\n", be32toh(caps_image->trksize));
+        printf("| Start position, rounded: %u\n", be32toh(caps_image->startpos));
+        printf("| Start bit (original data): %u\n", be32toh(caps_image->startbit));
+        printf("| Decoded data size in bits: %u\n", be32toh(caps_image->databits));
+        printf("| Decoded gap size in bits: %u\n", be32toh(caps_image->gapbits));
+        printf("| Decoded track size in bits: %u\n", be32toh(caps_image->trkbits));
+        printf("| Block count: %u\n", be32toh(caps_image->blkcnt));
+        printf("| Encoder process: %s\n", be32toh(caps_image->process) == 2 ? "RAW" :
+                                          be32toh(caps_image->process) == 1 ? "MFM" :
+                                                                              "N/A");
+        printf("| Image flags: 0x%08x\n", be32toh(caps_image->flag));
+        printf("| Data chunk identifier (did): %u\n", be32toh(caps_image->did));
+        printf("*------------------------------------------------------------------------\n");
+}
+
+/**
+ * @brief       Print platform name based on CapsInfo.type
+ */
 static const char *platform_to_string(uint32_t platform_id)
 {
         switch(platform_id) {
@@ -201,6 +298,35 @@ static const char *platform_to_string(uint32_t platform_id)
                 return "C64";
         case 9:
                 return "Atari8";
+        default:
+                return "INVALID";
+        }
+}
+
+/**
+ * @brief       CapsImage.dentype to string
+ */
+static const char *dentype_to_string(uint32_t dentype)
+{
+        switch(dentype) {
+        case 1:
+                return "Noise";
+        case 2:
+                return "Automatic according to track size";
+        case 3:
+                return "Amiga CopyLock old";
+        case 4:
+                return "Amiga CopyLock";
+        case 5:
+                return "AtariST CopyLock";
+        case 6:
+                return "Amiga SpeedLock";
+        case 7:
+                return "Amiga SpeedLock Old";
+        case 8:
+                return "Adam Brierley Amiga"; 
+        case 9:
+                return "Adam Brierley Amiga2";
         default:
                 return "INVALID";
         }

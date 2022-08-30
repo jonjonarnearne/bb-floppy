@@ -40,7 +40,14 @@ int write_flux(int argc, char ** argv)
                 );
 
         caps_parser_show_file_info(parser);
-        caps_parser_show_track_info(parser);
+
+        for (unsigned int i = 0; i < 160; ++i) {
+                caps_parser_show_track_info(parser, i >> 1, i & 1);
+        }
+
+        /**
+         * TODO: Implement parser for CapsData, and the CapsBlocks, that follows!
+         */
 
         caps_parser_cleanup(parser);
 caps_init_failed:
