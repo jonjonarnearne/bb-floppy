@@ -53,6 +53,43 @@ struct CapsImage {
         uint32_t reserved[3];   // future use
 };
 
+struct CapsData {
+        uint32_t size;  // data area size in bytes after chunk
+        uint32_t bsize; // data area size in bits
+        uint32_t dcrc;  // data area crc
+        uint32_t did;   // data chunk identifier
+};
+
+// original meaning of some CapsBlock entries for old images
+struct CapsBlockExt {
+        uint32_t blocksize;  // decoded block size, rounded
+        uint32_t gapsize;    // decoded gap size, rounded
+};
+
+// new meaning of some CapsBlock entries for new images
+struct SPSBlockExt {
+        uint32_t gapoffset;  // offset of gap stream in data area
+        uint32_t celltype;   // bitcell type
+};
+
+// union for old or new images
+union CapsBlockType {
+        struct CapsBlockExt caps; // access old image
+        struct SPSBlockExt sps;   // access new image
+};
+
+// block image descriptor
+struct CapsBlock {
+        uint32_t blockbits;  // decoded block size in bits
+        uint32_t gapbits;    // decoded gap size in bits
+        union CapsBlockType bt;  // content depending on image type
+        uint32_t enctype;    // encoder type
+        uint32_t flag;       // block flags
+        uint32_t gapvalue;   // default gap value
+        uint32_t dataoffset; // offset of data stream in data area
+};
+
+
 struct caps_node {
         struct caps_header header;
         long fpos;
@@ -67,9 +104,14 @@ struct caps_parser {
 struct caps_parser *caps_parser_init(FILE *fp);
 void caps_parser_cleanup(struct caps_parser *p);
 
+bool caps_parser_get_caps_image_for_did(struct caps_parser *p,
+                                        struct CapsImage *caps_image,
+                                        uint32_t did);
+
 void caps_parser_show_file_info(struct caps_parser *p);
 void caps_parser_show_track_info(struct caps_parser *p, unsigned int cylinder,
                                                         unsigned char head);
+void caps_parser_show_data(struct caps_parser *p, uint32_t did);
 #endif /* CAPS_PARSER_H */
 
 
