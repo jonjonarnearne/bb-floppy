@@ -15,7 +15,7 @@ struct caps_header {
  */
 struct CapsInfo {
         uint32_t type;          // image type
-        uint32_t encoder;       // image encoder ID
+        uint32_t encoder;       // image encoder ID - CAPS Enc = 1 -- SPS Enc = 2
         uint32_t encrev;        // image encoder revision
         uint32_t release;       // release ID
         uint32_t revision;      // release revision ID
@@ -82,7 +82,7 @@ union CapsBlockType {
 struct CapsBlock {
         uint32_t blockbits;  // decoded block size in bits
         uint32_t gapbits;    // decoded gap size in bits
-        union CapsBlockType bt;  // content depending on image type
+        union CapsBlockType bt;  // content depending on image type . CapsInfo.encoder
         uint32_t enctype;    // encoder type
         uint32_t flag;       // block flags
         uint32_t gapvalue;   // default gap value
@@ -90,8 +90,15 @@ struct CapsBlock {
 };
 
 
+union caps_chunk {
+        struct CapsInfo  info;  // Global info
+        struct CapsImage imge;  // Track Info
+        struct CapsData  data;  // Sector info
+};
+
 struct caps_node {
         struct caps_header header;
+        union caps_chunk chunk;
         long fpos;
         struct caps_node *next;
 };
@@ -105,7 +112,7 @@ struct caps_parser *caps_parser_init(FILE *fp);
 void caps_parser_cleanup(struct caps_parser *p);
 
 bool caps_parser_get_caps_image_for_did(struct caps_parser *p,
-                                        struct CapsImage *caps_image,
+                                        struct CapsImage **caps_image,
                                         uint32_t did);
 
 void caps_parser_show_file_info(struct caps_parser *p);

@@ -53,7 +53,6 @@ struct caps_parser *caps_parser_init(FILE *fp)
         }
 
         uint32_t extra_len = 0;
-        struct CapsData caps_data;
         struct caps_node *node = &p->caps_list_head;
         while(true) {
                 struct caps_node *n = malloc(sizeof(*n));
@@ -70,51 +69,78 @@ struct caps_parser *caps_parser_init(FILE *fp)
                         free(n);
                         if (!feof(p->fp)) {
                                 fprintf(stderr, "Read error!\n");
+                                caps_parser_cleanup(p);
+                                return NULL;
                         }
+                        // End of file!
                         break;
                 }
 
-                n->header.name = le32toh(n->header.name);
-                printf("Name: %4s\n", (char *)&n->header.name);
+                n->header.name = be32toh(n->header.name);
                 n->header.len = be32toh(n->header.len);
-
                 n->fpos = ftell(p->fp);
+
+                const uint32_t printable_name = htobe32(n->header.name);
+                printf("Name: %.4s\n", (char *)&printable_name);
+                unsigned int expected_len = sizeof n->header;
+                switch (n->header.name) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmultichar"
+                case 'INFO':
+#pragma GCC diagnostic pop
+                        expected_len += sizeof n->chunk.info;
+                        rc = fread(&n->chunk.info, sizeof n->chunk.info, 1, p->fp);
+                        break;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmultichar"
+                case 'IMGE':
+#pragma GCC diagnostic pop
+                        expected_len += sizeof n->chunk.imge;
+                        rc = fread(&n->chunk.imge, sizeof n->chunk.imge, 1, p->fp);
+                        break;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmultichar"
+                case 'DATA':
+#pragma GCC diagnostic pop
+                        expected_len += sizeof n->chunk.data;
+                        rc = fread(&n->chunk.data, sizeof n->chunk.data, 1, p->fp);
+                        break;
+                default:
+                        fprintf(stderr, "Got unexpected caps chunk: %.4s\n",
+                                        (char *)&printable_name);
+                        rc = 0;
+                }
+                if (rc != 1) {
+                        free(n);
+                        fprintf(stderr, "Failed to read caps chunk!\n");
+                        caps_parser_cleanup(p);
+                        return NULL;
+                }
+
+                if (n->header.len != expected_len) {
+                        free(n);
+                        caps_parser_cleanup(p);
+                        fprintf(stderr,
+                                "Integrity error, expected_len: %u - actual_len: %u\n",
+                                                        expected_len, n->header.len);
+                        return NULL;
+                }
 
                 extra_len = 0;
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmultichar"
-                if (n->header.name == htobe32('DATA')) {
+                if (n->header.name == 'DATA') {
+#pragma GCC diagnostic pop
                         /**
                          * The len reported in header is not correct when we
                          * encounter the DATA chunks.
                          * We have to parse the chunk to get the correct len
                          */
-#pragma GCC diagnostic pop
-                        rc = fread(&caps_data, sizeof caps_data, 1, p->fp);
-                        if (rc != 1) {
-                                free(n);
-                                fprintf(stderr, "Read error! DATA chunk!\n");
-                                break;
-                        }
-                        // The fread we just did moved the file pointer, so subtract amount read.
-                        extra_len = be32toh(caps_data.size) - sizeof caps_data;
+                        extra_len = be32toh(n->chunk.data.size);
                 }
-                /**
-                 * Todo.. Add length sanity checks!
-                        if (node->header.len != expected_len)  {
-                                fprintf(stderr,
-                                        "Bad IMGE size, expected %u bytes, got %u bytes!\n",
-                                        expected_len, node->header.len);
-                                count++;
-                                goto next_node;
-                        }
-                 */
 
-                if (n->header.len == 0) {
-                        printf("Header len was 0!\n");
-                        break;
-                }
-                fseek(p->fp, (n->header.len + extra_len - sizeof(struct caps_header)), SEEK_CUR);
+                // Move pointer to end of chunk
+                fseek(p->fp, (n->fpos + n->header.len - sizeof(struct caps_header) + extra_len), SEEK_SET);
 
                 node->next = n;
                 node = node->next;
@@ -137,25 +163,21 @@ void caps_parser_cleanup(struct caps_parser *p)
 }
 
 bool caps_parser_get_caps_image_for_did(struct caps_parser *p,
-                                        struct CapsImage *caps_image,
+                                        struct CapsImage **caps_image,
                                         uint32_t did)
 {
         struct caps_node *node = p->caps_list_head.next;
         while(node) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmultichar"
-                if (node->header.name == htobe32('IMGE')) {
+                if (node->header.name == 'IMGE') {
 #pragma GCC diagnostic pop
-                        bool rc = caps_parser_read_caps_image_node(
-                                                        p, node, caps_image);
-                        if (!rc) {
-                                return false;
-                        }
-                        if (be32toh(caps_image->did) != did) {
+                        if (be32toh(node->chunk.imge.did) != did) {
                                 // Keep looking
                                 goto next_node;
                         }
 
+                        *caps_image = &node->chunk.imge;
                         return true;
                 }
 next_node:
@@ -172,7 +194,7 @@ void caps_parser_show_file_info(struct caps_parser *p)
         while(node) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmultichar"
-                if (node->header.name == htobe32('INFO')) {
+                if (node->header.name == 'INFO') {
 #pragma GCC diagnostic pop
                         found = true;
                         break;
@@ -184,52 +206,31 @@ void caps_parser_show_file_info(struct caps_parser *p)
                 return;
         }
 
-        static_assert(sizeof(struct CapsInfo) == 84, "CapsInfo size assertion failed!");
-        if (node->header.len != sizeof(struct CapsInfo) + sizeof(struct caps_header))  {
-                printf("Expected %u bytes in INFO, got %d bytes!\n",
-                                sizeof(struct CapsInfo) + sizeof(struct caps_header),
-                                node->header.len);
-                return;
-        }
-
-        printf("Found INFO chunk! at file offset: %ld\n", node->fpos);
-        struct CapsInfo capsinfo;
-        int rc = fseek(p->fp, node->fpos, SEEK_SET);
-        if (rc != 0) {
-                fprintf(stderr, "Failed to seek in file, error: %s\n",
-                                                        strerror(errno));
-                return;
-        }
-        rc = fread(&capsinfo, sizeof capsinfo, 1, p->fp);
-        if (rc != 1) {
-                fprintf(stderr, "Failed to read capsinfo block from file!\n");
-                return;
-        }
         printf("*------------------------------------------------------------------------\n");
         printf("|                                CapsInfo:\n");
         printf("*------------------------------------------------------------------------\n");
-        printf("| Image type: %s\n", be32toh(capsinfo.type) == 1 ? "FDD" :
-                                   be32toh(capsinfo.type) == 0 ? "N/A" :
+        printf("| Image type: %s\n", be32toh(node->chunk.info.type) == 1 ? "FDD" :
+                                   be32toh(node->chunk.info.type) == 0 ? "N/A" :
                                                  "UNKNOWN VERSION");
-        printf("| Encoder: %s\n", be32toh(capsinfo.encoder) == 2 ? "RAW" :
-                                be32toh(capsinfo.encoder) == 1 ? "MFM" :
-                                be32toh(capsinfo.encoder) == 0 ? "N/A" :
+        printf("| Encoder: %s\n", be32toh(node->chunk.info.encoder) == 2 ? "RAW" :
+                                be32toh(node->chunk.info.encoder) == 1 ? "MFM" :
+                                be32toh(node->chunk.info.encoder) == 0 ? "N/A" :
                                                  "UNKNOWN VERSION");
-        printf("| Encoder revision: %d\n", be32toh(capsinfo.encrev));
-        printf("| Release: %d\n", be32toh(capsinfo.release));
-        printf("| Revision: %d\n", be32toh(capsinfo.revision));
-        printf("| Original source ref.: 0x%08x\n", be32toh(capsinfo.origin));
-        printf("| Min. cylinder: %d\n", be32toh(capsinfo.mincylinder));
-        printf("| Max. cylinder: %d\n", be32toh(capsinfo.maxcylinder));
-        printf("| Min. head: %d\n", be32toh(capsinfo.minhead));
-        printf("| Max. head: %d\n", be32toh(capsinfo.maxhead));
-        printf("| Date: 0x%08x (%u)\n", be32toh(capsinfo.date),
-                                      be32toh(capsinfo.date));
-        printf("| Time: 0x%08x (%u)\n", be32toh(capsinfo.time),
-                                      be32toh(capsinfo.time));
+        printf("| Encoder revision: %d\n", be32toh(node->chunk.info.encrev));
+        printf("| Release: %d\n", be32toh(node->chunk.info.release));
+        printf("| Revision: %d\n", be32toh(node->chunk.info.revision));
+        printf("| Original source ref.: 0x%08x\n", be32toh(node->chunk.info.origin));
+        printf("| Min. cylinder: %d\n", be32toh(node->chunk.info.mincylinder));
+        printf("| Max. cylinder: %d\n", be32toh(node->chunk.info.maxcylinder));
+        printf("| Min. head: %d\n", be32toh(node->chunk.info.minhead));
+        printf("| Max. head: %d\n", be32toh(node->chunk.info.maxhead));
+        printf("| Date: 0x%08x (%u)\n", be32toh(node->chunk.info.date),
+                                      be32toh(node->chunk.info.date));
+        printf("| Time: 0x%08x (%u)\n", be32toh(node->chunk.info.time),
+                                      be32toh(node->chunk.info.time));
         printf("| Platforms: [");
         for (unsigned int i = 0; i < 4; ++i) {
-                const uint32_t id = be32toh(capsinfo.platform[i]);
+                const uint32_t id = be32toh(node->chunk.info.platform[i]);
                 if (id == 0 || id > 9) {
                         // Platform is N/A. or above max.
                         continue;
@@ -237,11 +238,11 @@ void caps_parser_show_file_info(struct caps_parser *p)
                 if (i > 0) {
                         printf(", ");
                 }
-                printf("%s", platform_to_string(be32toh(capsinfo.platform[i])));
+                printf("%s", platform_to_string(be32toh(node->chunk.info.platform[i])));
         }
         printf("]\n");
-        printf("| Disk #: %d\n", be32toh(capsinfo.disknum));
-        printf("| User Id: 0x%08x\n", be32toh(capsinfo.userid));
+        printf("| Disk #: %d\n", be32toh(node->chunk.info.disknum));
+        printf("| User Id: 0x%08x\n", be32toh(node->chunk.info.userid));
         printf("*------------------------------------------------------------------------\n");
 }
 
@@ -253,42 +254,22 @@ void caps_parser_show_file_info(struct caps_parser *p)
 void caps_parser_show_track_info(struct caps_parser *p, unsigned int cylinder,
                                                         unsigned char head)
 {
-        static_assert(sizeof(struct CapsImage) == 68,
-                                        "CapsImage size assertion failed!");
-        static const size_t expected_len = sizeof(struct CapsImage)
-                                         + sizeof(struct caps_header);
-
         unsigned int count = 0;
-        struct CapsImage caps_image;
         struct caps_node *node = p->caps_list_head.next;
         while(node) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmultichar"
-                if (node->header.name == htobe32('IMGE')) {
+                if (node->header.name == 'IMGE') {
 #pragma GCC diagnostic pop
-                        if (node->header.len != expected_len)  {
-                                fprintf(stderr,
-                                        "Bad IMGE size, expected %u bytes, got %u bytes!\n",
-                                        expected_len, node->header.len);
-                                count++;
-                                goto next_node;
-                        }
-                        bool rc = caps_parser_read_caps_image_node(
-                                                        p, node, &caps_image);
-                        if (!rc) {
-                                fprintf(stderr, "Failed to read at node: %u\n",
-                                                                        count);
-                                break;
-                        }
-                        if (be32toh(caps_image.cylinder) != cylinder ||
-                            be32toh(caps_image.head) != head) {
+                        if (be32toh(node->chunk.imge.cylinder) != cylinder ||
+                            be32toh(node->chunk.imge.head) != head) {
                                 // Keep looking
                                 count++;
                                 goto next_node;
                         }
 
                         // Done!
-                        print_caps_image(&caps_image);
+                        print_caps_image(&node->chunk.imge);
                         return;
                 }
 next_node:
@@ -303,68 +284,77 @@ next_node:
 void caps_parser_show_data(struct caps_parser *p, uint32_t did)
 {
         // We need a caps image to get all data from the CapsData block.
-        struct CapsImage caps_image;
+        struct CapsImage *caps_image;
         bool rc = caps_parser_get_caps_image_for_did(p, &caps_image, did);
         if (!rc) {
                 fprintf(stderr, "Could not get CapsImage for did: %u\n", did);
                 return;
         }
 
-        static_assert(sizeof(struct CapsData) == 16,
-                                        "CapsData size assertion failed!");
-        static const size_t expected_len = sizeof(struct CapsData)
-                                         + sizeof(struct caps_header);
-
-        unsigned int count = 0;
-        struct CapsData caps_data;
-        struct CapsBlock caps_block;
+        bool found = false;
         struct caps_node *node = p->caps_list_head.next;
         while(node) {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmultichar"
-                if (node->header.name == htobe32('DATA')) {
+                if (node->header.name == 'DATA') {
 #pragma GCC diagnostic pop
-                        if (node->header.len != expected_len)  {
-                                fprintf(stderr,
-                                        "Bad DATA size, expected %u bytes, got %u bytes!\n",
-                                        expected_len, node->header.len);
-                                count++;
-                                goto next_node;
-                        }
-                        bool rc = caps_parser_read_caps_data_node(
-                                                        p, node, &caps_data);
-                        if (!rc) {
-                                fprintf(stderr, "Failed to read at node: %u\n",
-                                                                        count);
+                        if (be32toh(node->chunk.data.did) == did) {
+                                found = true;
                                 break;
                         }
-                        if (be32toh(caps_data.did) != did) {
-                                // Keep looking
-                                count++;
-                                goto next_node;
-                        }
-
-                        // Done!
-                        print_caps_data(&caps_data);
-
-                        for (unsigned int i = 0; i < be32toh(caps_image.blkcnt); ++i) {
-                                int r = fread(&caps_block, sizeof caps_block, 1, p->fp);
-                                if (r != 1) {
-                                        fprintf(stderr, "Failed to read CapsBlock out of file\n");
-                                        return;
-                                }
-                                printf("Block %u\n", i);
-                                print_caps_block(&caps_block);
-                        }
-
-                        return;
                 }
-next_node:
                 node = node->next;
         }
 
-        // We only drop out of this loop if we dindn't find what we was looking for!
-        fprintf(stderr, "Could not find DATA data for did: %u\n", did);
+        if (!found) {
+                fprintf(stderr, "Could not find DATA data for did: %u\n", did);
+                return;
+        }
+
+        print_caps_data(&node->chunk.data);
+
+        // First set this to start pos of block data.
+        long expected_end_fpos = node->fpos + sizeof node->chunk.data;
+        fseek(p->fp, expected_end_fpos,  SEEK_SET);
+
+        struct CapsBlock caps_block;
+        for (unsigned int i = 0; i < be32toh(caps_image->blkcnt); ++i) {
+                int r = fread(&caps_block, sizeof caps_block, 1, p->fp);
+                if (r != 1) {
+                        fprintf(stderr, "Failed to read CapsBlock out of file\n");
+                        return;
+                }
+                printf("Block %u\n", i);
+                if (i == 0) {
+                        expected_end_fpos += be32toh(caps_block.dataoffset);
+                }
+                print_caps_block(&caps_block);
+        }
+
+        const long fpos = node->fpos + sizeof node->chunk.data;
+        const long cur = ftell(p->fp);
+        printf("Node pos: %ld - Cur pos: %ld - Diff: %ld\n",
+                                        fpos, cur, cur - fpos);
+        if (expected_end_fpos != cur) {
+                fprintf(stderr,
+                        "Integrety error Expected fpos: %ld - Current fpos: %ld\n",
+                                        expected_end_fpos, cur);
+        }
+
+        printf("Sample size: %u\n",
+                be32toh(node->chunk.data.size) - (sizeof caps_block  * 11));
+
+        /*** READ SAMPLES NOW ***/
+        uint8_t sample_head = 0;
+        int ret = fread(&sample_head, sizeof sample_head, 1, p->fp);
+        if (ret != 1) {
+                fprintf(stderr, "ERROR!\n");
+                return;
+        }
+
+        //uint8_t sample_count_integer_size = sample_head >> 5;
+        //uint8_t sample_type = sample_head & 0x1f;
+
 }
 
 static bool caps_parser_read_caps_image_node( struct caps_parser *p,
