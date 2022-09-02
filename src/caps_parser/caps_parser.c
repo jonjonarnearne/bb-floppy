@@ -7,22 +7,24 @@
 
 #include "caps_parser.h"
 
-static const char __attribute__((__unused__)) * platform_to_string(
-                                                        uint32_t platform_id);
-static const char __attribute__((__unused__)) * dentype_to_string(
-                                                        uint32_t dentype);
+static void __attribute__((__unused__)) parse_ipf_samples(uint8_t *samples,
+                                                        size_t num_samples);
+
 static void __attribute__((__unused__)) print_caps_image(
                                                 struct CapsImage *caps_image);
-static bool __attribute__((__unused__)) caps_parser_read_caps_image_node(
-                                struct caps_parser *p, struct caps_node *node,
-                                                struct CapsImage *caps_image);
-static bool __attribute__((__unused__)) caps_parser_read_caps_data_node(
-                                struct caps_parser *p, struct caps_node *node,
-                                                struct CapsData *caps_data);
 static void __attribute__((__unused__)) print_caps_data(
                                                 struct CapsData *caps_data);
 static void __attribute__((__unused__)) print_caps_block(
                                                 struct CapsBlock *caps_block);
+
+static const char __attribute__((__unused__)) * platform_to_string(
+                                                        uint32_t platform_id);
+static const char __attribute__((__unused__)) * dentype_to_string(
+                                                        uint32_t dentype);
+static const char __attribute__((__unused__)) * sampletype_to_string(
+                                                        uint32_t sampletype);
+
+static void __attribute__((__unused__)) hexdump(void *data, size_t len);
 
 struct caps_parser *caps_parser_init(FILE *fp)
 {
@@ -317,6 +319,7 @@ void caps_parser_show_data(struct caps_parser *p, uint32_t did)
         long expected_end_fpos = node->fpos + sizeof node->chunk.data;
         fseek(p->fp, expected_end_fpos,  SEEK_SET);
 
+        uint32_t offsets[11] = {0};
         struct CapsBlock caps_block;
         for (unsigned int i = 0; i < be32toh(caps_image->blkcnt); ++i) {
                 int r = fread(&caps_block, sizeof caps_block, 1, p->fp);
@@ -329,6 +332,12 @@ void caps_parser_show_data(struct caps_parser *p, uint32_t did)
                         expected_end_fpos += be32toh(caps_block.dataoffset);
                 }
                 print_caps_block(&caps_block);
+
+                if (i < 11) {
+                        offsets[i] = be32toh(caps_block.dataoffset);
+                } else {
+                        fprintf(stderr, "Warning .. Sector no: %u - not storing offset!\n", i);
+                }
         }
 
         const long fpos = node->fpos + sizeof node->chunk.data;
@@ -341,40 +350,99 @@ void caps_parser_show_data(struct caps_parser *p, uint32_t did)
                                         expected_end_fpos, cur);
         }
 
+        /*** READ SAMPLES ***/
         printf("Sample size: %u\n",
                 be32toh(node->chunk.data.size) - (sizeof caps_block  * 11));
 
-        /*** READ SAMPLES NOW ***/
-        uint8_t sample_head = 0;
-        int ret = fread(&sample_head, sizeof sample_head, 1, p->fp);
-        if (ret != 1) {
-                fprintf(stderr, "ERROR!\n");
+        uint8_t sampledata_len = be32toh(node->chunk.data.size) - (sizeof caps_block * 11);
+        uint8_t *sampledata = malloc(sampledata_len);
+        if (!sampledata) {
+                fprintf(stderr, "Memory allocation for sampledata failed!\n");
                 return;
         }
 
-        //uint8_t sample_count_integer_size = sample_head >> 5;
-        //uint8_t sample_type = sample_head & 0x1f;
+        int ret = fread(sampledata, 1, sampledata_len, p->fp);
+        if (ret != sampledata_len) {
+                fprintf(stderr, "Couldn't read sample data from disk!\n");
+                free(sampledata);
+                return;
+        }
 
+        /*** PARSE SAMPLES ***/
+        uint8_t *ptr = sampledata;
+        const uint8_t *endptr = ptr + (offsets[1] - offsets[0]);
+        while(ptr < endptr) {
+                uint8_t sample_head = *ptr++;
+                uint8_t sample_type = sample_head & 0x1f;
+                uint8_t sizeof_sample_len = sample_head >> 5;
+                if (sizeof_sample_len > 4) {
+                        fprintf(stderr,
+                                "Sample parsing failed on bad `sizeof_sample_len`: %u\n",
+                                                                        sizeof_sample_len);
+                        break;
+                }
+                
+                //TODO: This needs fixing..
+                //
+                // Will read 0x02 0x1c as 7170 instead of 540.
+                //
+                uint32_t num_samples = 0;
+                memcpy(&num_samples, ptr, sizeof_sample_len);
+
+                ptr += sizeof_sample_len;
+                printf("Num samples: %u of type: %s (%u)\n", num_samples,
+                                sampletype_to_string(sample_type), sample_type);
+                hexdump(&num_samples, 4);
+
+                if (sample_type == 2 || sample_type == 3) {
+                        // data || gap -- IPF_encoded
+                        //parse_ipf_samples(ptr, num_samples);
+                } else if (sample_type == 1) {
+                        // mark/sync
+                        hexdump(ptr, num_samples);
+                } else {
+                        fprintf(stderr, "Unexpected sample type: %u\n", sample_type);
+                }
+                ptr += num_samples;
+        }
+
+        free(sampledata);
 }
 
-static bool caps_parser_read_caps_image_node( struct caps_parser *p,
-                        struct caps_node *node, struct CapsImage *caps_image)
+static inline uint16_t ipf_to_mfm(uint8_t ipf)
 {
-        int rc = fseek(p->fp, node->fpos, SEEK_SET);
-        if (rc != 0) {
-                fprintf(stderr,
-                        "Failed to seek in disk image, error: %s\n",
-                                                        strerror(errno));
-                return false;
+        uint16_t mfm = 0;
+        size_t bit = 0x80;
+
+        while(bit) {
+                mfm <<= 2;
+                if (ipf & bit) {
+                        // Set data bit
+                        mfm |= 0x01;
+                } else if ((ipf & 0x04) == 0) {
+                        // Add clock bit if needed
+                        mfm |= 0x02;
+                }
+                bit >>= 1;
         }
 
-        rc = fread(caps_image, sizeof(*caps_image), 1, p->fp);
-        if (rc != 1) {
-                fprintf(stderr, "Failed to read from disk\n");
-                return false;              
+        return mfm;
+}
+
+static void parse_ipf_samples(uint8_t *samples, size_t num_samples)
+{
+        uint16_t *mfm_samples = malloc(num_samples * 2);
+        if (!mfm_samples) {
+                fprintf(stderr, "mfm sample alloc failed!\n");
+                return;
         }
 
-        return true;
+        for (unsigned int i = 0; i < num_samples; ++i) {
+                mfm_samples[i] = ipf_to_mfm(samples[i]);
+        }
+
+        hexdump(mfm_samples, num_samples * 2);
+        free(mfm_samples);
 }
 
 /**
@@ -402,26 +470,6 @@ static void print_caps_image(struct CapsImage *caps_image)
         printf("| Image flags: 0x%08x\n", be32toh(caps_image->flag));
         printf("| Data chunk identifier (did): %u\n", be32toh(caps_image->did));
         printf("*------------------------------------------------------------------------\n");
-}
-
-static bool caps_parser_read_caps_data_node( struct caps_parser *p,
-                        struct caps_node *node, struct CapsData *caps_data)
-{
-        int rc = fseek(p->fp, node->fpos, SEEK_SET);
-        if (rc != 0) {
-                fprintf(stderr,
-                        "Failed to seek in disk image, error: %s\n",
-                                                        strerror(errno));
-                return false;
-        }
-
-        rc = fread(caps_data, sizeof(*caps_data), 1, p->fp);
-        if (rc != 1) {
-                fprintf(stderr, "Failed to read from disk\n");
-                return false;              
-        }
-
-        return true;
 }
 
 static void print_caps_data(struct CapsData *caps_data)
@@ -515,5 +563,50 @@ static const char *dentype_to_string(uint32_t dentype)
         default:
                 return "INVALID";
         }
+}
+
+static const char *sampletype_to_string(uint32_t sampletype)
+{
+        switch(sampletype) {
+        case 0:
+                // data stream end
+                return "cpdatEnd";
+        case 1:
+                // mark/sync
+                return "cpdatMark";
+        case 2:
+                // data
+                return "cpdatData";
+        case 3:
+                // gap
+                return "cpdatGap";
+        case 4:
+                // raw
+                return "cpdatRaw";
+        case 5:
+                // flakey data
+                return "cpdatFData";
+        case 6:
+                return "cpdatLast";
+        default:
+                return "INVALID";
+        }
+}
+
+static void hexdump(void *rdata, size_t len)
+{
+        uint8_t *data = rdata;
+        uint8_t c[17];
+        memset(c, 0x00, 17);
+        unsigned int i = 0;
+        for (; i < len; ++i) {
+                if (i && (i % 16 == 0)) {
+                        printf("   %s\n", c);
+                }
+                printf("%02x ", data[i]);
+                c[i % 16] = (data[i] > 32 && data[i] < 127) ? data[i] : '.';
+        }
+
+        printf("   %s\n", c);
 }
 
