@@ -6,9 +6,11 @@
 #include <string.h>
 
 #include "caps_parser.h"
+#include "../mfm_utils/mfm_utils.h"
 
-static void __attribute__((__unused__)) parse_ipf_samples(const uint8_t *samples,
-                                                        size_t num_samples);
+static uint16_t __attribute__((__unused__)) * parse_ipf_samples(const uint8_t *samples,
+                                                        size_t num_samples,
+                                                        uint16_t prev_sample);
 
 static void __attribute__((__unused__)) print_caps_image(
                                                 struct CapsImage *caps_image);
@@ -350,11 +352,14 @@ void caps_parser_show_data(struct caps_parser *p, uint32_t did)
                                         expected_end_fpos, cur);
         }
 
-        /*** READ SAMPLES ***/
+        /*** READ SAMPLES FOR SINGLE SECTOR ***/
         printf("Sample size: %u\n",
                 be32toh(node->chunk.data.size) - (sizeof caps_block  * 11));
 
+        struct amiga_sector sector = {0};
+
         size_t sampledata_len = be32toh(node->chunk.data.size) - (sizeof caps_block * 11);
+        // We read the ipf samples for a single sector from the ipf file into this buffer.
         uint8_t *sampledata = malloc(sampledata_len);
         if (!sampledata) {
                 fprintf(stderr, "Memory allocation for sampledata failed!\n");
@@ -368,15 +373,34 @@ void caps_parser_show_data(struct caps_parser *p, uint32_t did)
                 return;
         }
 
-        /*** PARSE SAMPLES ***/
+        /**
+         * This buffer will hold all bits for a complete sector,
+         * after transforming from ipf samples to mfm bits.
+         * The size of this buffer can be read by doing:
+         *
+         *     be32toh(caps_block[sector].blockbits) / 8
+         *
+         * This should yield 1088 for regular amiga sectors.
+         */
+        uint8_t *mfm_bitstream = malloc(1088);
+        if (!mfm_bitstream) {
+                fprintf(stderr, "Couldn't allocate buffer for sector bitstream\n");
+                free(sampledata);
+                return;
+        }
+
+        /*** PARSE IPF SAMPLES FOR SINGLE SECTOR / CONVERT TO MFM BITSTREAM ***/
+        // The ipf sample parser must keep track of the previous sample for correct clock pulses.
+        uint16_t prev_sample = 0x0000;
+
+        // TODO: Break up this large while loop into smaller sections.
+        uint8_t *mfm_ptr = mfm_bitstream;
         uint8_t *ptr = sampledata;
         const uint8_t *endptr = ptr + (offsets[1] - offsets[0]);
         while(ptr < endptr) {
                 uint8_t sample_head = *ptr++;
                 uint8_t sample_type = sample_head & 0x1f;
                 uint8_t sizeof_sample_len = sample_head >> 5;
-                if (sizeof_sample_len > 4) {
-                }
                 
                 size_t num_samples = 0;
                 switch(sizeof_sample_len) {
@@ -413,29 +437,61 @@ void caps_parser_show_data(struct caps_parser *p, uint32_t did)
                 }
 
                 ptr += sizeof_sample_len;
+                /*
                 printf("Num samples: %u of type: %s (%u)\n", num_samples,
                                 sampletype_to_string(sample_type), sample_type);
+                */
 
                 if (sample_type == 0) {
                         // End!
                         printf("Found end of sector samples!\n");
                 } else if (sample_type == 1) {
+
                         // mark/sync
-                        hexdump(ptr, num_samples);
-                } else if (sample_type == 2 || sample_type == 3) {
-                        // data || gap -- IPF_encoded
-                        parse_ipf_samples(ptr, num_samples);
-                        printf("Num_samples: %u\n", num_samples);
+                        // Copy Sync marker into mfm bitstream
+                        memcpy(mfm_ptr, ptr, num_samples);
+                        mfm_ptr += num_samples;
+
+                        //hexdump(ptr, num_samples);
+                        prev_sample = htobe16(((uint16_t *)ptr)[(num_samples / 2) - 1]);
+
+                } else if (sample_type == 2 /* data */ || sample_type == 3 /* gap */) {
+
+                        uint16_t *mfm_samples = parse_ipf_samples(ptr, num_samples, prev_sample);
+                        prev_sample = mfm_samples[(num_samples * 2) - 1];
+
+                        memcpy(mfm_ptr, mfm_samples, num_samples * 2);
+                        mfm_ptr += num_samples * 2;
+
+                        free(mfm_samples);
+
                 } else {
                         fprintf(stderr, "Unexpected sample type: %u\n", sample_type);
                 }
 
-                printf("Pointer: %p\n", ptr);
                 ptr += num_samples;
-                printf("Pointer: %p\n", ptr);
         }
 
 break_loop:
+
+        ret = parse_amiga_mfm_sector(mfm_bitstream + 4, 1084, &sector);
+        if (ret == 0) {
+                printf("sector.header_info: %08x\n", be32toh(sector.header_info));
+                printf("sector.header_sector_label: ");
+                for (unsigned int i = 0; i < 4; ++i) {
+                        printf("%08x ", be32toh(sector.header_sector_label[i]));
+                }
+                printf("\n");
+                const uint8_t track_no = (be32toh(sector.header_info) >> 16) & 0xff;
+                const uint8_t sector_no = (be32toh(sector.header_info) >> 8) & 0xff;
+                //const uint8_t sector_to_gap = be32toh(sector.header_info) & 0xff;
+                printf("Sector: %u\n", sector_no);
+                printf("Track: %u - head: %u\n", track_no >> 1, track_no & 1);
+                printf("Header checksum: %s\n", sector.header_checksum_ok ? "OK" : "BAD");
+                printf("Data checksum: %s\n", sector.data_checksum_ok ? "OK" : "BAD");
+        }
+
+        free(mfm_bitstream);
         free(sampledata);
 }
 
@@ -456,23 +512,30 @@ static inline uint16_t ipf_to_mfm(uint8_t ipf)
                 bit >>= 1;
         }
 
-        return mfm;
+        return htobe16(mfm);
 }
 
-static void parse_ipf_samples(const uint8_t *samples, size_t num_samples)
+static uint16_t *parse_ipf_samples(const uint8_t *samples, size_t num_samples,
+                                                        uint16_t prev_sample)
 {
         uint16_t *mfm_samples = malloc(num_samples * 2);
         if (!mfm_samples) {
                 fprintf(stderr, "mfm sample alloc failed!\n");
-                return;
+                return NULL;
         }
 
         for (unsigned int i = 0; i < num_samples; ++i) {
                 mfm_samples[i] = ipf_to_mfm(samples[i]);
+                if ((prev_sample & 0x0001) == 0x0001) {
+                        // Clear bit 15
+                        mfm_samples[i] &= ~(1 << 15);
+                }
+                prev_sample = mfm_samples[i];
         }
 
-        hexdump(mfm_samples, num_samples);
-        free(mfm_samples);
+        //hexdump(mfm_samples, num_samples * 2);
+
+        return mfm_samples;
 }
 
 /**
