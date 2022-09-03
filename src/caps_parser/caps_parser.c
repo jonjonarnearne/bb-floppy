@@ -7,7 +7,7 @@
 
 #include "caps_parser.h"
 
-static void __attribute__((__unused__)) parse_ipf_samples(uint8_t *samples,
+static void __attribute__((__unused__)) parse_ipf_samples(const uint8_t *samples,
                                                         size_t num_samples);
 
 static void __attribute__((__unused__)) print_caps_image(
@@ -24,7 +24,7 @@ static const char __attribute__((__unused__)) * dentype_to_string(
 static const char __attribute__((__unused__)) * sampletype_to_string(
                                                         uint32_t sampletype);
 
-static void __attribute__((__unused__)) hexdump(void *data, size_t len);
+static void __attribute__((__unused__)) hexdump(const void *data, size_t len);
 
 struct caps_parser *caps_parser_init(FILE *fp)
 {
@@ -354,7 +354,7 @@ void caps_parser_show_data(struct caps_parser *p, uint32_t did)
         printf("Sample size: %u\n",
                 be32toh(node->chunk.data.size) - (sizeof caps_block  * 11));
 
-        uint8_t sampledata_len = be32toh(node->chunk.data.size) - (sizeof caps_block * 11);
+        size_t sampledata_len = be32toh(node->chunk.data.size) - (sizeof caps_block * 11);
         uint8_t *sampledata = malloc(sampledata_len);
         if (!sampledata) {
                 fprintf(stderr, "Memory allocation for sampledata failed!\n");
@@ -376,36 +376,66 @@ void caps_parser_show_data(struct caps_parser *p, uint32_t did)
                 uint8_t sample_type = sample_head & 0x1f;
                 uint8_t sizeof_sample_len = sample_head >> 5;
                 if (sizeof_sample_len > 4) {
-                        fprintf(stderr,
-                                "Sample parsing failed on bad `sizeof_sample_len`: %u\n",
-                                                                        sizeof_sample_len);
-                        break;
                 }
                 
-                //TODO: This needs fixing..
-                //
-                // Will read 0x02 0x1c as 7170 instead of 540.
-                //
-                uint32_t num_samples = 0;
-                memcpy(&num_samples, ptr, sizeof_sample_len);
+                size_t num_samples = 0;
+                switch(sizeof_sample_len) {
+                case 0:
+                        if (sample_type != 0) {
+                                fprintf(stderr,
+                                        "Integrety error. Got size 0 for a %s sample\n",
+                                        sampletype_to_string(sample_type));
+                                goto break_loop;
+                        }
+                        break;
+                case 1:
+                        // Single byte - endian doesn't matter.
+                        memcpy(&num_samples, ptr, sizeof_sample_len);
+                        break;
+                
+                case 2: {
+                        uint16_t tmp = 0;
+                        memcpy(&tmp, ptr, sizeof_sample_len);
+                        num_samples = be16toh(tmp);
+                        break;
+                }
+                case 4: {
+                        uint32_t tmp = 0;
+                        memcpy(&tmp, ptr, sizeof_sample_len);
+                        num_samples = be32toh(tmp);
+                        break;
+                }
+                default:
+                        fprintf(stderr,
+                                "Sample parsing failed on `sizeof_sample_len`: %u\n",
+                                                                        sizeof_sample_len);
+                        goto break_loop;
+                }
 
                 ptr += sizeof_sample_len;
                 printf("Num samples: %u of type: %s (%u)\n", num_samples,
                                 sampletype_to_string(sample_type), sample_type);
-                hexdump(&num_samples, 4);
 
-                if (sample_type == 2 || sample_type == 3) {
-                        // data || gap -- IPF_encoded
-                        //parse_ipf_samples(ptr, num_samples);
+                if (sample_type == 0) {
+                        // End!
+                        printf("Found end of sector samples!\n");
                 } else if (sample_type == 1) {
                         // mark/sync
                         hexdump(ptr, num_samples);
+                } else if (sample_type == 2 || sample_type == 3) {
+                        // data || gap -- IPF_encoded
+                        parse_ipf_samples(ptr, num_samples);
+                        printf("Num_samples: %u\n", num_samples);
                 } else {
                         fprintf(stderr, "Unexpected sample type: %u\n", sample_type);
                 }
+
+                printf("Pointer: %p\n", ptr);
                 ptr += num_samples;
+                printf("Pointer: %p\n", ptr);
         }
 
+break_loop:
         free(sampledata);
 }
 
@@ -429,7 +459,7 @@ static inline uint16_t ipf_to_mfm(uint8_t ipf)
         return mfm;
 }
 
-static void parse_ipf_samples(uint8_t *samples, size_t num_samples)
+static void parse_ipf_samples(const uint8_t *samples, size_t num_samples)
 {
         uint16_t *mfm_samples = malloc(num_samples * 2);
         if (!mfm_samples) {
@@ -441,7 +471,7 @@ static void parse_ipf_samples(uint8_t *samples, size_t num_samples)
                 mfm_samples[i] = ipf_to_mfm(samples[i]);
         }
 
-        hexdump(mfm_samples, num_samples * 2);
+        hexdump(mfm_samples, num_samples);
         free(mfm_samples);
 }
 
@@ -593,9 +623,9 @@ static const char *sampletype_to_string(uint32_t sampletype)
         }
 }
 
-static void hexdump(void *rdata, size_t len)
+static void hexdump(const void *rdata, size_t len)
 {
-        uint8_t *data = rdata;
+        const uint8_t *data = rdata;
         uint8_t c[17];
         memset(c, 0x00, 17);
         unsigned int i = 0;
