@@ -24,7 +24,7 @@ struct sector_samples {
         int sector_number;
 };
 struct track_samples {
-        uint32_t *samples; // Raw sample data, must be free'd!
+        uint32_t *samples; // Raw sample data, heap allocated
         int sample_count;
         struct sector_samples sectors[11];
 };
@@ -111,6 +111,11 @@ int read_flux(int argc, char ** argv)
                 box(log_window, 0, 0);
                 wrefresh(log_window);
 
+                /**
+                 * The call to pru_read_timing will allocate a buffer for samples.
+                 * Our track.samples variable will point to this buffer.
+                 * We own this buffer after this call!
+                 */
                 track.sample_count = pru_read_timing(pru, &track.samples, revolutions, &index_offsets);
                 size_t index = 0;
                 struct amiga_sector sector;
@@ -122,6 +127,12 @@ int read_flux(int argc, char ** argv)
                         if ( find_sync_marker(&track, &index) ) {
                                 wprintw(log_window, "sync found @ index: %u\n", index);
                                 size_t byte_count = 0;
+                                /**
+                                 * The call to samples_to_bitstream will allocate a buffer to hold
+                                 * the bitstream.
+                                 * We have to free this buffer after use!
+                                 * The size of this buffer is returned in the byte_count variable.
+                                 */
                                 uint8_t *bitstream = samples_to_bitsream(&track, index, &byte_count);
                                 wprintw(log_window, "read %u bytes out of the track data\n", byte_count);
                                 wrefresh(log_window);
@@ -176,6 +187,10 @@ int read_flux(int argc, char ** argv)
 
                                 free(bitstream);
 
+                                /**
+                                 * Move the index pointer, so we don't find the same
+                                 * sector sync marker on next iteration.
+                                 */
                                 index += 10;
                         } else {
                                 //fprintf(stderr, "\t\tNo sync markers found in track %d - skipping\n", i);
@@ -247,13 +262,17 @@ fopen_failed:
 
 /**
  * @brief       Convert an array of timing values to an array of raw data
+ *
+ * @detail      struct track_samples contain all samples (timing data) read from
+ *              a single track. We use index as a pointer to a specific sample to start
+ *              converting to bitstream, based on a 2us bit cell size.
  */
 static uint8_t *samples_to_bitsream(struct track_samples *track, size_t index, size_t *_byte_count)
 {
         *_byte_count = 0; // return paramater.
 
         // Maximum bits per sample is 4.
-        const int bit_count = track->sample_count * 4;
+        const int bit_count = (track->sample_count - index) * 4;
         const int byte_count = 1 + (bit_count / 8);
         uint8_t *bitstream = malloc(byte_count);
         if (!bitstream) {
