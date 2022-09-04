@@ -11,9 +11,6 @@
 static uint16_t __attribute__((__unused__)) * parse_ipf_samples(const uint8_t *samples,
                                                         size_t num_samples,
                                                         uint16_t prev_sample);
-
-static void __attribute__((__unused__)) print_caps_image(
-                                                struct CapsImage *caps_image);
 static void __attribute__((__unused__)) print_caps_data(
                                                 struct CapsData *caps_data);
 static void __attribute__((__unused__)) print_caps_block(
@@ -85,7 +82,7 @@ struct caps_parser *caps_parser_init(FILE *fp)
                 n->fpos = ftell(p->fp);
 
                 const uint32_t printable_name = htobe32(n->header.name);
-                printf("Name: %.4s\n", (char *)&printable_name);
+                //printf("Name: %.4s\n", (char *)&printable_name);
                 unsigned int expected_len = sizeof n->header;
                 switch (n->header.name) {
 #pragma GCC diagnostic push
@@ -166,9 +163,36 @@ void caps_parser_cleanup(struct caps_parser *p)
         free(p);
 }
 
-bool caps_parser_get_caps_image_for_did(struct caps_parser *p,
-                                        struct CapsImage **caps_image,
-                                        uint32_t did)
+/**
+ * @brief       Get the track data descriptor for track and head.
+ */
+bool caps_parser_get_caps_image_for_track_and_head(const struct caps_parser *p,
+                                        const struct CapsImage ** caps_image,
+                                 unsigned char track, unsigned char head)
+{
+        struct caps_node *node = p->caps_list_head.next;
+        while(node) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmultichar"
+                if (node->header.name == 'IMGE') {
+#pragma GCC diagnostic pop
+                        if (be32toh(node->chunk.imge.cylinder) == track ||
+                            be32toh(node->chunk.imge.head) == head) {
+                                *caps_image = &node->chunk.imge;
+                                return true;
+                        }
+
+                }
+                node = node->next;
+        }
+        return false;
+}
+
+/**
+ * @brief       Get the track data descriptor for did
+ */
+bool caps_parser_get_caps_image_for_did(const struct caps_parser *p,
+                                struct CapsImage **caps_image, uint32_t did)
 {
         struct caps_node *node = p->caps_list_head.next;
         while(node) {
@@ -177,18 +201,57 @@ bool caps_parser_get_caps_image_for_did(struct caps_parser *p,
                 if (node->header.name == 'IMGE') {
 #pragma GCC diagnostic pop
                         if (be32toh(node->chunk.imge.did) != did) {
-                                // Keep looking
-                                goto next_node;
+                                *caps_image = &node->chunk.imge;
+                                return true;
                         }
 
-                        *caps_image = &node->chunk.imge;
-                        return true;
                 }
-next_node:
+                node = node->next;
+        }
+        return false;
+}
+
+uint8_t *caps_parser_get_bitstream_for_track(const struct caps_parser *p,
+                                        const struct CapsImage * caps_image)
+{
+        bool found = false;
+        struct caps_node *node = p->caps_list_head.next;
+        while(node) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmultichar"
+                if (node->header.name == 'DATA') {
+#pragma GCC diagnostic pop
+                        if (node->chunk.data.did == caps_image->did) {
+                                found = true;
+                                break;
+                        }
+                }
                 node = node->next;
         }
 
-        return false;
+        if (!found) {
+                fprintf(stderr,
+                        "Integrety error: Could not find track data!\n");
+                return NULL;
+        }
+
+        print_caps_data(&node->chunk.data);
+
+        size_t track_size = be32toh(caps_image->trkbits) >> 3; // Div. 8
+        if (track_size > INT16_MAX) {
+                fprintf(stderr,
+                        "Assertion error, track is more than %d bytes!\n",
+                                                                INT16_MAX);
+                return NULL;
+        }
+        uint8_t *bitstream = malloc(track_size);
+        if (!bitstream) {
+                fprintf(stderr,
+                        "Couldn't allocate memory for bitstream\n");
+                return NULL;
+
+        }
+        return bitstream;
 }
 
 void caps_parser_show_file_info(struct caps_parser *p)
@@ -258,31 +321,13 @@ void caps_parser_show_file_info(struct caps_parser *p)
 void caps_parser_show_track_info(struct caps_parser *p, unsigned int cylinder,
                                                         unsigned char head)
 {
-        unsigned int count = 0;
-        struct caps_node *node = p->caps_list_head.next;
-        while(node) {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmultichar"
-                if (node->header.name == 'IMGE') {
-#pragma GCC diagnostic pop
-                        if (be32toh(node->chunk.imge.cylinder) != cylinder ||
-                            be32toh(node->chunk.imge.head) != head) {
-                                // Keep looking
-                                count++;
-                                goto next_node;
-                        }
-
-                        // Done!
-                        print_caps_image(&node->chunk.imge);
-                        return;
-                }
-next_node:
-                node = node->next;
-        }
-
-        // We only drop out of this loop if we dindn't find what we was looking for!
-        fprintf(stderr, "Could not find IMGE data for cyl: %u head: %u\n",
+        const struct CapsImage *image;
+        if (caps_parser_get_caps_image_for_track_and_head(p, &image, cylinder, head)) {
+                caps_parser_print_caps_image(image);
+        } else {
+                fprintf(stderr, "Could not find IMGE data for cyl: %u head: %u\n",
                                                         cylinder, head);
+        }
 }
 
 void caps_parser_show_data(struct caps_parser *p, uint32_t did, uint8_t *sector_data)
@@ -347,6 +392,7 @@ void caps_parser_show_data(struct caps_parser *p, uint32_t did, uint8_t *sector_
         printf("Node pos: %ld - Cur pos: %ld - Diff: %ld\n",
                                         fpos, cur, cur - fpos);
         if (expected_end_fpos != cur) {
+                // Expect the file ptr to be at start of sample data now.
                 fprintf(stderr,
                         "Integrety error Expected fpos: %ld - Current fpos: %ld\n",
                                         expected_end_fpos, cur);
@@ -394,7 +440,7 @@ void caps_parser_show_data(struct caps_parser *p, uint32_t did, uint8_t *sector_
         uint16_t prev_sample = 0x0000;
 
         // TODO: Break up this large while loop into smaller sections.
-        uint8_t *mfm_ptr = mfm_bitstream;
+        uint8_t *mfm_ptr = mfm_bitstream; // Used for output.
         uint8_t *ptr = sampledata;
         const uint8_t *endptr = ptr + (offsets[1] - offsets[0]);
         while(ptr < endptr) {
@@ -544,9 +590,9 @@ static uint16_t *parse_ipf_samples(const uint8_t *samples, size_t num_samples,
 }
 
 /**
- * @brief       Private function to give details of CapsImage
+ * @brief       Debug print a CapsImage struct.
  */
-static void print_caps_image(struct CapsImage *caps_image)
+void caps_parser_print_caps_image(const struct CapsImage *caps_image)
 {
         printf("*------------------------------------------------------------------------\n");
         printf("|                                CapsImage:\n");

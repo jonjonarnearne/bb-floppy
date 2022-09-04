@@ -34,16 +34,18 @@ int write_flux(int argc, char ** argv)
 
         }
 
-        printf(
-                "Write Flux called!\n"
+        printf( "Write Flux called!\n"
                 "Note - Hardcoded for \"/home/root/IPF-Images/Lemmings2-Disk1.ipf\"\n"
-                );
+        );
 
-        caps_parser_show_file_info(parser);
-
-        for (unsigned int i = 0; i < 1; ++i) {
-                caps_parser_show_track_info(parser, i >> 1, i & 1);
-                caps_parser_show_data(parser, i + 1, NULL /* Discard the data */);
+        const struct CapsImage * track_data = NULL;
+        bool ret = caps_parser_get_caps_image_for_track_and_head(parser, &track_data, 0,0);
+        if (ret) {
+                caps_parser_print_caps_image(track_data);
+                uint8_t *bitstream = caps_parser_get_bitstream_for_track(parser, track_data);
+                free(bitstream);
+        } else {
+                fprintf(stderr, "Failed to find track 0 head 0 in ipf image!\n");
         }
 
         caps_parser_cleanup(parser);

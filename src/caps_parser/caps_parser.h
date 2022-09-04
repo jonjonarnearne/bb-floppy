@@ -12,6 +12,7 @@ struct caps_header {
 
 /**
  * Struct stored in INFO header.
+ * Metadata about the image
  */
 struct CapsInfo {
         uint32_t type;          // image type
@@ -34,6 +35,7 @@ struct CapsInfo {
 
 /**
  * Struct stored in IMGE header.
+ * Describes a single track in the disk image.
  */
 struct CapsImage {
         uint32_t cylinder;      // cylinder#
@@ -53,6 +55,11 @@ struct CapsImage {
         uint32_t reserved[3];   // future use
 };
 
+/**
+ * Struct stored in DATA header.
+ * References a single IMGE chunk, and holds the data for
+ * the given track.
+ */
 struct CapsData {
         uint32_t size;  // data area size in bytes after chunk
         uint32_t bsize; // data area size in bits
@@ -78,7 +85,12 @@ union CapsBlockType {
         struct SPSBlockExt sps;   // access new image
 };
 
-// block image descriptor
+/**
+ * Struct stored in the DATA chunk.
+ * There are blkcnt number of these structs,
+ * which usually corresponds with sectors on disk.
+ * This struct is follwed by the raw ipf data.
+ */
 struct CapsBlock {
         uint32_t blockbits;  // decoded block size in bits
         uint32_t gapbits;    // decoded gap size in bits
@@ -111,9 +123,16 @@ struct caps_parser {
 struct caps_parser *caps_parser_init(FILE *fp);
 void caps_parser_cleanup(struct caps_parser *p);
 
-bool caps_parser_get_caps_image_for_did(struct caps_parser *p,
-                                        struct CapsImage **caps_image,
-                                        uint32_t did);
+bool caps_parser_get_caps_image_for_track_and_head(const struct caps_parser *p,
+                                        const struct CapsImage ** caps_image,
+                                unsigned char track, unsigned char head);
+bool caps_parser_get_caps_image_for_did(const struct caps_parser *p,
+                                struct CapsImage **caps_image, uint32_t did);
+
+uint8_t *caps_parser_get_bitstream_for_track(const struct caps_parser *p,
+                                        const struct CapsImage * caps_image);
+// For printing structs.
+void caps_parser_print_caps_image(const struct CapsImage *caps_image);
 
 void caps_parser_show_file_info(struct caps_parser *p);
 void caps_parser_show_track_info(struct caps_parser *p, unsigned int cylinder,
