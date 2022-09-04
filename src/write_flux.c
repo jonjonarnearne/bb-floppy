@@ -43,7 +43,7 @@ int write_flux(int argc, char ** argv)
 
         for (unsigned int i = 0; i < 1; ++i) {
                 caps_parser_show_track_info(parser, i >> 1, i & 1);
-                caps_parser_show_data(parser, i + 1);
+                caps_parser_show_data(parser, i + 1, NULL /* Discard the data */);
         }
 
         caps_parser_cleanup(parser);

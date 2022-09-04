@@ -1,17 +1,19 @@
+#include <assert.h>
+#include <endian.h>
+#include <errno.h>
+#include <ncurses.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
-#include <assert.h>
-#include <endian.h>
 #include <time.h>
 #include <unistd.h>
-#include <ncurses.h>
 
 #include "pru-setup.h"
 #include "flux_data.h"
 #include "read_flux.h"
 #include "mfm_utils/mfm_utils.h"
+#include "caps_parser/caps_parser.h"
 
 void hexdump(const void *b, size_t len);
 extern struct pru * pru;
@@ -30,10 +32,30 @@ struct track_samples {
 static bool find_sync_marker(struct track_samples *track, size_t *index);
 static uint8_t *samples_to_bitsream(struct track_samples *track, size_t index, size_t *byte_count);
 
+static uint8_t disk_sector_data[512];
+static uint8_t ipf_sector_data[512];
+
 int read_flux(int argc, char ** argv)
 {
         uint8_t revolutions = 1;
         uint32_t *index_offsets;
+
+        int rc = 0;
+
+        FILE *ipf_img = fopen("/home/root/IPF-Images/Lemmings2_Disk1.ipf", "rb");
+        if (!ipf_img) {
+                rc = -1;
+                fprintf(stderr, "Could not open disk image. Error: %s\n", strerror(errno));
+                goto fopen_failed;
+        }
+
+        struct caps_parser *parser = caps_parser_init(ipf_img);
+        if (!parser) {
+                rc = -1;
+                fprintf(stderr, "Could not initialize caps_parser\n");
+                goto caps_init_failed;
+
+        }
 
         initscr();
         start_color();
@@ -77,7 +99,8 @@ int read_flux(int argc, char ** argv)
         struct track_samples track = {0};
 
 
-        for (unsigned int i = 0; i < 3; i++) {
+
+        for (unsigned int i = 0; i < 1; i++) {
                 pru_set_head_side(pru, i & 1 ? PRU_HEAD_LOWER : PRU_HEAD_UPPER);
 
                 werase(status_bar);
@@ -98,9 +121,10 @@ int read_flux(int argc, char ** argv)
 
                         if ( find_sync_marker(&track, &index) ) {
                                 wprintw(log_window, "sync found @ index: %u\n", index);
-                                wrefresh(log_window);
                                 size_t byte_count = 0;
                                 uint8_t *bitstream = samples_to_bitsream(&track, index, &byte_count);
+                                wprintw(log_window, "read %u bytes out of the track data\n", byte_count);
+                                wrefresh(log_window);
                                 if (!bitstream) {
                                         fprintf(stderr, "\t\tBitstream buffer allocation failed!\n");
                                         break;
@@ -142,6 +166,11 @@ int read_flux(int argc, char ** argv)
                                                  1 + (track_no >> 1), /* COL */
                                                 ' ' | A_REVERSE | color);
                                         wrefresh(sector_window);
+
+                                        if (sect == 0) {
+                                                memcpy(disk_sector_data, sector.data, 512);
+                                        }
+
                                         free(sector.data);
                                 }
 
@@ -200,9 +229,20 @@ int read_flux(int argc, char ** argv)
         delwin(status_bar);
         endwin();
 
-        //printf("ROWS: %d, COLS: %d\n", row, col);
 
-        return 0;
+        caps_parser_show_data(parser, 1, ipf_sector_data);
+        if (memcmp(ipf_sector_data, disk_sector_data, 512)) {
+                fprintf(stderr, "Data mismatch!\n");
+        }
+
+        caps_parser_cleanup(parser);
+
+caps_init_failed:
+        fclose(ipf_img);
+
+fopen_failed:
+
+        return rc;
 }
 
 /**

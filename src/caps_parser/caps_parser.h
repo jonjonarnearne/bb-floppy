@@ -118,7 +118,7 @@ bool caps_parser_get_caps_image_for_did(struct caps_parser *p,
 void caps_parser_show_file_info(struct caps_parser *p);
 void caps_parser_show_track_info(struct caps_parser *p, unsigned int cylinder,
                                                         unsigned char head);
-void caps_parser_show_data(struct caps_parser *p, uint32_t did);
+void caps_parser_show_data(struct caps_parser *p, uint32_t did, uint8_t *sector_data);
 #endif /* CAPS_PARSER_H */
 
 

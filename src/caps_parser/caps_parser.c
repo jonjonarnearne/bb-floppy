@@ -285,7 +285,7 @@ next_node:
                                                         cylinder, head);
 }
 
-void caps_parser_show_data(struct caps_parser *p, uint32_t did)
+void caps_parser_show_data(struct caps_parser *p, uint32_t did, uint8_t *sector_data)
 {
         // We need a caps image to get all data from the CapsData block.
         struct CapsImage *caps_image;
@@ -489,6 +489,11 @@ break_loop:
                 printf("Track: %u - head: %u\n", track_no >> 1, track_no & 1);
                 printf("Header checksum: %s\n", sector.header_checksum_ok ? "OK" : "BAD");
                 printf("Data checksum: %s\n", sector.data_checksum_ok ? "OK" : "BAD");
+
+                if (sector_data) {
+                        memcpy(sector_data, sector.data, 512);
+                }
+                free(sector.data);
         }
 
         free(mfm_bitstream);
