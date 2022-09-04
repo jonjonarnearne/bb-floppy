@@ -30,10 +30,14 @@ struct track_samples {
 };
 
 static bool find_sync_marker(struct track_samples *track, size_t *index);
-static uint8_t *samples_to_bitsream(struct track_samples *track, size_t index, size_t *byte_count);
+static uint8_t __attribute__((__unused__)) * samples_to_bitsream(
+                struct track_samples *track, size_t index, size_t *byte_count);
+static size_t timing_sample_to_bitstream(uint32_t * restrict samples, size_t samples_count,
+                                        uint8_t * restrict bitstream, size_t bitstream_size);
 
 static uint8_t disk_sector_data[512];
 static uint8_t ipf_sector_data[512];
+static uint8_t mfm_sector_bitstream[1088]; // Amiga mfm sector byte size.
 
 int read_flux(int argc, char ** argv)
 {
@@ -98,8 +102,6 @@ int read_flux(int argc, char ** argv)
 
         struct track_samples track = {0};
 
-
-
         for (unsigned int i = 0; i < 1; i++) {
                 pru_set_head_side(pru, i & 1 ? PRU_HEAD_LOWER : PRU_HEAD_UPPER);
 
@@ -126,22 +128,16 @@ int read_flux(int argc, char ** argv)
 
                         if ( find_sync_marker(&track, &index) ) {
                                 wprintw(log_window, "sync found @ index: %u\n", index);
-                                size_t byte_count = 0;
-                                /**
-                                 * The call to samples_to_bitstream will allocate a buffer to hold
-                                 * the bitstream.
-                                 * We have to free this buffer after use!
-                                 * The size of this buffer is returned in the byte_count variable.
-                                 */
-                                uint8_t *bitstream = samples_to_bitsream(&track, index, &byte_count);
-                                wprintw(log_window, "read %u bytes out of the track data\n", byte_count);
-                                wrefresh(log_window);
-                                if (!bitstream) {
-                                        fprintf(stderr, "\t\tBitstream buffer allocation failed!\n");
-                                        break;
-                                }
 
-                                int rc = parse_amiga_mfm_sector(bitstream, byte_count, &sector);
+                                size_t consumed = timing_sample_to_bitstream(
+                                                track.samples + index,
+                                                track.sample_count - index,
+                                                mfm_sector_bitstream, 1088);
+                                wprintw(log_window, "mfm sector used %u samples\n", consumed);
+                                wrefresh(log_window);
+
+                                // This function returns a heap allocated buffer in sector.data.
+                                int rc = parse_amiga_mfm_sector(mfm_sector_bitstream, 1088, &sector);
                                 if (rc == 0) {
                                         const uint8_t track_no = (be32toh(sector.header_info) >> 16) & 0xff;
                                         const uint8_t sector_no = (be32toh(sector.header_info) >> 8) & 0xff;
@@ -184,8 +180,6 @@ int read_flux(int argc, char ** argv)
 
                                         free(sector.data);
                                 }
-
-                                free(bitstream);
 
                                 /**
                                  * Move the index pointer, so we don't find the same
@@ -266,6 +260,8 @@ fopen_failed:
  * @detail      struct track_samples contain all samples (timing data) read from
  *              a single track. We use index as a pointer to a specific sample to start
  *              converting to bitstream, based on a 2us bit cell size.
+ *
+ * @deprecated  Use timing_sample_to_bitstream instead!
  */
 static uint8_t *samples_to_bitsream(struct track_samples *track, size_t index, size_t *_byte_count)
 {
@@ -318,6 +314,58 @@ static uint8_t *samples_to_bitsream(struct track_samples *track, size_t index, s
         //printf("Timing to bitstream, conversion done for %d bits\n", bit);
         *_byte_count = byte_count;
         return bitstream;
+}
+
+/**
+ * @detail      Parse `samples_count` flux timing data into a bitstream, based on
+ *              a hardcoded bitcell time of 2 microseconds.
+ *              The bitsrem is written into the given `bitstream` pointer until
+ *              either we are out of samples to read or the bitstream buffer is full.
+ */
+static size_t timing_sample_to_bitstream(uint32_t * restrict samples, size_t samples_count,
+                                        uint8_t * restrict bitstream, size_t bitstream_size)
+{
+        // clear bitstream..
+        memset(bitstream, 0x00, bitstream_size);
+        /**
+         * We start at bit -2 as this is what the bitstream will look like from
+         * the index we found for sync:
+         *
+         *     |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|
+         *    01010001001000100101000100100010010
+         *     |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|
+         *
+         * While the actual sync mark are the bits in the box.
+         *
+         *   xx|01000100100010010100010010001001|x
+         *
+         * Without the -2 here, the data will be offset by one bit.
+         *
+         * TODO:
+         * Investigate if we can set `bit` to 0 and just change 
+         * the index we return from find_sync_marker(...)
+         *
+         */
+        unsigned int bit = -2; // See Note ^^^
+        size_t i = 0;
+        for (; i < samples_count; i++) {
+                if (samples[i] > 700) {
+                        bit += 4;
+                } else if (samples[i] > 500) {
+                        bit += 3;
+                } else {
+                        bit += 2;
+                }
+                const int byte_no = bit >> 3;  // Div. 8
+                const int bit_no = bit & 0x07; // Mod. 8
+                if (byte_no >= bitstream_size) {
+                        // Bitstream full.
+                        return i + 1;
+                }
+                bitstream[byte_no] |= (1 << (7 - (bit_no)));
+        }
+
+        return i;
 }
 
 /**
