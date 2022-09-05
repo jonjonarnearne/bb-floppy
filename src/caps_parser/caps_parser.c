@@ -8,6 +8,15 @@
 #include "caps_parser.h"
 #include "../mfm_utils/mfm_utils.h"
 
+static bool __attribute__((__unused__)) read_track_to_bitstream(
+                                const struct caps_parser * restrict p,
+                                const struct CapsImage * restrict caps_image,
+                                const struct caps_node * restrict data_node,
+                                const struct CapsBlock * restrict sector_info,
+                                                        size_t sector_count,
+                                uint8_t * restrict bitstream,
+                                                        size_t track_size);
+
 static uint16_t __attribute__((__unused__)) * parse_ipf_samples(const uint8_t *samples,
                                                         size_t num_samples,
                                                         uint16_t prev_sample);
@@ -214,6 +223,7 @@ bool caps_parser_get_caps_image_for_did(const struct caps_parser *p,
 uint8_t *caps_parser_get_bitstream_for_track(const struct caps_parser *p,
                                         const struct CapsImage * caps_image)
 {
+        uint8_t *rc = NULL;
         bool found = false;
         struct caps_node *node = p->caps_list_head.next;
         while(node) {
@@ -232,26 +242,81 @@ uint8_t *caps_parser_get_bitstream_for_track(const struct caps_parser *p,
         if (!found) {
                 fprintf(stderr,
                         "Integrety error: Could not find track data!\n");
-                return NULL;
+                goto error_track_data_not_found;
         }
 
         print_caps_data(&node->chunk.data);
 
-        size_t track_size = be32toh(caps_image->trkbits) >> 3; // Div. 8
+        const long caps_block_pos = node->fpos + sizeof node->chunk.data;
+        int err = fseek(p->fp, caps_block_pos,  SEEK_SET);
+        if (err != 0) {
+                fprintf(stderr,
+                        "Couldn't seek in file: %s\n", strerror(errno));
+                goto error_seek_failed;
+        }
+
+        size_t sector_count = be32toh(caps_image->blkcnt);
+        // trkbits is the complete track size in bits.
+        size_t track_size = be32toh(caps_image->trkbits) >> 3; // Div. 8 to get bytes.
+
+        if (be32toh(caps_image->trkbits) & 0x7) {
+                fprintf(stderr,
+                        "Assertion error, track bits isn't evenly divisable by 8\n");
+                goto error_trkbits_out_of_range;
+        }
+
         if (track_size > INT16_MAX) {
                 fprintf(stderr,
                         "Assertion error, track is more than %d bytes!\n",
                                                                 INT16_MAX);
-                return NULL;
+                goto error_trkbits_out_of_range;
+                
         }
+
+        struct CapsBlock *sector_info = malloc(sizeof(*sector_info) * sector_count);
+        if (!sector_info) {
+                fprintf(stderr,
+                        "Coundn't allocate memory for sector data\n");
+                goto error_sector_info_alloc_failed;
+        }
+        static_assert(sizeof(*sector_info) == 32, "CapsBlock/sector_info has padding!");
+
+
+        err = fread(sector_info, sizeof(*sector_info), sector_count, p->fp);
+        if (err != sector_count) {
+                fprintf(stderr, "Failed to read sector_info out of file\n");
+                goto error_read_failed;
+        }
+
         uint8_t *bitstream = malloc(track_size);
         if (!bitstream) {
                 fprintf(stderr,
                         "Couldn't allocate memory for bitstream\n");
-                return NULL;
+                goto error_bitstream_alloc_failed;
 
         }
-        return bitstream;
+
+        found = read_track_to_bitstream(p, caps_image, node,
+                                sector_info, sector_count,
+                                bitstream, track_size);
+        if (found) {
+                rc = bitstream;
+        } else {
+                // read_track_to_bitstream will write out error message!
+                free(bitstream);
+        }
+
+
+error_bitstream_alloc_failed:
+error_read_failed:
+        free(sector_info);
+
+error_sector_info_alloc_failed:
+error_trkbits_out_of_range:
+error_seek_failed:
+error_track_data_not_found:
+
+        return rc;
 }
 
 void caps_parser_show_file_info(struct caps_parser *p)
@@ -544,6 +609,147 @@ break_loop:
 
         free(mfm_bitstream);
         free(sampledata);
+}
+
+/**
+ * @brief       Read ipf samples out of file.
+ */
+static bool read_track_to_bitstream( const struct caps_parser * restrict p,
+                                const struct CapsImage * restrict caps_image,
+                                const struct caps_node * restrict data_node,
+        const struct CapsBlock * restrict sector_info, size_t sector_count,
+                        uint8_t * restrict bitstream, size_t track_size)
+{
+        const long expected_pos = data_node->fpos
+                                + sizeof data_node->chunk.data
+                                + be32toh(sector_info[0].dataoffset);
+        const long pos = ftell(p->fp);
+        if (pos < 0) {
+                fprintf(stderr,
+                        "Couldn't read file position!\n");
+                return false;
+        } else if (pos != expected_pos) {
+                fprintf(stderr,
+                        "We are not at correct position in the file!\n");
+                return false;
+        }
+
+        const size_t sampledata_len = be32toh(data_node->chunk.data.size)
+                                    - be32toh(sector_info[0].dataoffset);
+        // We read the ipf samples for a single sector from the ipf file into this buffer.
+        uint8_t *sampledata = malloc(sampledata_len);
+        if (!sampledata) {
+                fprintf(stderr, "Memory allocation for sampledata failed!\n");
+                return false;
+        }
+
+        printf("sector 0 offset: %u\n", be32toh(sector_info[0].dataoffset));
+        printf("Going to read: %u bytes of sampledata\n", sampledata_len);
+
+        int ret = fread(sampledata, 1, sampledata_len, p->fp);
+        if (ret != sampledata_len) {
+                fprintf(stderr, "Couldn't read sample data from disk!\n");
+                free(sampledata);
+                return false;
+        }
+
+        uint8_t *mfm_ptr = bitstream;
+
+        uint16_t prev_sample = 0x0000;
+
+        // TODO: Break up this large while loop into smaller sections.
+        uint8_t *ptr = sampledata;
+        const uint8_t *endptr = ptr + sampledata_len;
+        while(ptr < endptr) {
+                uint8_t sample_head = *ptr++;
+                uint8_t sample_type = sample_head & 0x1f;
+                uint8_t sizeof_sample_len = sample_head >> 5;
+                
+                size_t num_samples = 0;
+                switch(sizeof_sample_len) {
+                case 0:
+                        if (sample_type != 0) {
+                                fprintf(stderr,
+                                        "Integrety error. Got size 0 for a %s sample\n",
+                                        sampletype_to_string(sample_type));
+                                goto break_loop;
+                        }
+                        break;
+                case 1:
+                        // Single byte - endian doesn't matter.
+                        memcpy(&num_samples, ptr, sizeof_sample_len);
+                        break;
+                
+                case 2: {
+                        uint16_t tmp = 0;
+                        memcpy(&tmp, ptr, sizeof_sample_len);
+                        num_samples = be16toh(tmp);
+                        break;
+                }
+                case 4: {
+                        uint32_t tmp = 0;
+                        memcpy(&tmp, ptr, sizeof_sample_len);
+                        num_samples = be32toh(tmp);
+                        break;
+                }
+                default:
+                        fprintf(stderr,
+                                "Sample parsing failed on `sizeof_sample_len`: %u\n",
+                                                                        sizeof_sample_len);
+                        goto break_loop;
+                }
+
+                ptr += sizeof_sample_len;
+                /*
+                printf("Num samples: %u of type: %s (%u)\n", num_samples,
+                                sampletype_to_string(sample_type), sample_type);
+                */
+
+                if (sample_type == 0) {
+                        // End!
+                        printf("Found end of sector samples!\n");
+                } else if (sample_type == 1) {
+
+                        // mark/sync
+                        // Copy Sync marker into mfm bitstream
+                        memcpy(mfm_ptr, ptr, num_samples);
+                        mfm_ptr += num_samples;
+
+                        //hexdump(ptr, num_samples);
+                        prev_sample = htobe16(((uint16_t *)ptr)[(num_samples / 2) - 1]);
+
+                } else if (sample_type == 2 /* data */ || sample_type == 3 /* gap */) {
+
+                        uint16_t *mfm_samples = parse_ipf_samples(ptr, num_samples, prev_sample);
+                        prev_sample = mfm_samples[(num_samples * 2) - 1];
+
+                        memcpy(mfm_ptr, mfm_samples, num_samples * 2);
+                        mfm_ptr += num_samples * 2;
+
+                        free(mfm_samples);
+
+                } else {
+                        fprintf(stderr, "Unexpected sample type: %u\n", sample_type);
+                }
+
+                ptr += num_samples;
+        }
+
+break_loop: ; // <- Semicolon to get ridd of compiler error <:)
+        const size_t expected_bytes = be32toh(caps_image->databits) >> 3;
+        const size_t bytes_written = mfm_ptr - bitstream;
+        if ( bytes_written != (be32toh(caps_image->databits) >> 3) ) {
+                fprintf(stderr,
+                        "Wrong amount of data written. Expected %u bytes, but we wrote %u bytes\n",
+                                                expected_bytes, bytes_written);
+        } else {
+                printf("Wrote %u of %u bytes to bitstream\n",
+                                bytes_written, track_size);
+        }
+
+        free(sampledata);
+
+        return true;
 }
 
 static inline uint16_t ipf_to_mfm(uint8_t ipf)

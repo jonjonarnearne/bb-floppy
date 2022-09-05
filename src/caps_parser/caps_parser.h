@@ -111,7 +111,7 @@ union caps_chunk {
 struct caps_node {
         struct caps_header header;
         union caps_chunk chunk;
-        long fpos;
+        long fpos;              // absolute file position right after the header.
         struct caps_node *next;
 };
 
