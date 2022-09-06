@@ -35,9 +35,8 @@ static uint8_t __attribute__((__unused__)) * samples_to_bitsream(
 static size_t timing_sample_to_bitstream(uint32_t * restrict samples, size_t samples_count,
                                         uint8_t * restrict bitstream, size_t bitstream_size);
 
-static uint8_t disk_sector_data[512];
-static uint8_t ipf_sector_data[512];
-static uint8_t mfm_sector_bitstream[1088]; // Amiga mfm sector byte size.
+//static uint8_t disk_sector_data[512];
+//static uint8_t ipf_sector_data[512];
 
 int read_flux(int argc, char ** argv)
 {
@@ -60,6 +59,14 @@ int read_flux(int argc, char ** argv)
                 goto caps_init_failed;
 
         }
+
+        uint8_t *mfm_sector_bitstream = malloc(1088 * 11); // Amiga mfm sector byte size times 11 sectors.
+        if (!mfm_sector_bitstream) {
+                rc = -1;
+                fprintf(stderr, "Could not allocate bitstream buffer!\n");
+                goto mfm_sector_bitstream_failed;
+        }
+        memset(mfm_sector_bitstream, 0xaa, 1088 * 11);
 
         initscr();
         start_color();
@@ -120,11 +127,14 @@ int read_flux(int argc, char ** argv)
                  */
                 track.sample_count = pru_read_timing(pru, &track.samples, revolutions, &index_offsets);
                 size_t index = 0;
-                struct amiga_sector sector;
+                //struct amiga_sector sector;
 
                 for (unsigned int sect = 0; sect < 11; ++sect) {
                         wprintw(log_window, "------------ Look for sector sync %d ----------------\n", sect);
                         wrefresh(log_window);
+
+                        uint8_t *mfm_bitstream_ptr = mfm_sector_bitstream + (1088 * sect);
+                        mfm_bitstream_ptr += 4; // Skip 4 bytes ahead
 
                         if ( find_sync_marker(&track, &index) ) {
                                 wprintw(log_window, "sync found @ index: %u\n", index);
@@ -132,12 +142,13 @@ int read_flux(int argc, char ** argv)
                                 size_t consumed = timing_sample_to_bitstream(
                                                 track.samples + index,
                                                 track.sample_count - index,
-                                                mfm_sector_bitstream, 1088);
+                                                mfm_bitstream_ptr, 1084);
                                 wprintw(log_window, "mfm sector used %u samples\n", consumed);
                                 wrefresh(log_window);
 
+#if 0
                                 // This function returns a heap allocated buffer in sector.data.
-                                int rc = parse_amiga_mfm_sector(mfm_sector_bitstream, 1088, &sector);
+                                int rc = parse_amiga_mfm_sector(mfm_bitstream_ptr, 1084, &sector);
                                 if (rc == 0) {
                                         const uint8_t track_no = (be32toh(sector.header_info) >> 16) & 0xff;
                                         const uint8_t sector_no = (be32toh(sector.header_info) >> 8) & 0xff;
@@ -174,12 +185,15 @@ int read_flux(int argc, char ** argv)
                                                 ' ' | A_REVERSE | color);
                                         wrefresh(sector_window);
 
+                                        /*
                                         if (sect == 0) {
                                                 memcpy(disk_sector_data, sector.data, 512);
                                         }
+                                        */
 
                                         free(sector.data);
                                 }
+#endif
 
                                 /**
                                  * Move the index pointer, so we don't find the same
@@ -239,11 +253,64 @@ int read_flux(int argc, char ** argv)
         endwin();
 
 
+#if 0
         caps_parser_show_data(parser, 1, ipf_sector_data);
         if (memcmp(ipf_sector_data, disk_sector_data, 512)) {
                 fprintf(stderr, "Data mismatch!\n");
         }
+#endif
 
+        struct amiga_sector sector;
+        const struct CapsImage * track_data = NULL;
+        bool ret = caps_parser_get_caps_image_for_track_and_head(parser, &track_data, 0,0);
+        if (ret) {
+                //caps_parser_print_caps_image(track_data);
+                uint8_t *bitstream = caps_parser_get_bitstream_for_track(parser, track_data);
+
+                rc = parse_amiga_mfm_sector(bitstream + 4, 1084, &sector);
+                if (rc == 0) {
+                        printf("ipf bitstream sector:\n");
+                        const uint8_t track_no = (be32toh(sector.header_info) >> 16) & 0xff;
+                        const uint8_t sector_no = (be32toh(sector.header_info) >> 8) & 0xff;
+                        //const uint8_t sector_to_gap = be32toh(sector.header_info) & 0xff;
+                        printf("-- [I] Track: %d - head: %d - Sector: %d\n", track_no >> 1, track_no & 1, sector_no);
+                        if (!sector.data_checksum_ok) {
+                                fprintf(stderr, "Data checksum bad!\n");
+                        }
+                        if (!sector.header_checksum_ok) {
+                                fprintf(stderr, "Header checksum bad!\n");
+                        }
+                        free(sector.data);
+                }
+
+                hexdump(bitstream, 1088);
+
+                free(bitstream);
+        } else {
+                fprintf(stderr, "Failed to find track 0 head 0 in ipf image!\n");
+        }
+
+        printf("mfm bitstream:\n");
+        rc = parse_amiga_mfm_sector(mfm_sector_bitstream + 4, 1084, &sector);
+        if (rc == 0) {
+                printf("disk bitstream sector:\n");
+                const uint8_t track_no = (be32toh(sector.header_info) >> 16) & 0xff;
+                const uint8_t sector_no = (be32toh(sector.header_info) >> 8) & 0xff;
+                //const uint8_t sector_to_gap = be32toh(sector.header_info) & 0xff;
+                printf("-- [I] Track: %d - head: %d - Sector: %d\n", track_no >> 1, track_no & 1, sector_no);
+                if (!sector.data_checksum_ok) {
+                        fprintf(stderr, "Data checksum bad!\n");
+                }
+                if (!sector.header_checksum_ok) {
+                        fprintf(stderr, "Header checksum bad!\n");
+                }
+                free(sector.data);
+        }
+        hexdump(mfm_sector_bitstream, 1088);
+
+        free(mfm_sector_bitstream);
+
+mfm_sector_bitstream_failed:
         caps_parser_cleanup(parser);
 
 caps_init_failed:

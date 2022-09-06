@@ -781,6 +781,8 @@ static uint16_t *parse_ipf_samples(const uint8_t *samples, size_t num_samples,
                 return NULL;
         }
 
+#error "THERE IS A BUG HERE -- WE GET 0x66 WHICH IS ILLEGAL"
+
         for (unsigned int i = 0; i < num_samples; ++i) {
                 mfm_samples[i] = ipf_to_mfm(samples[i]);
                 if ((prev_sample & 0x0001) == 0x0001) {
