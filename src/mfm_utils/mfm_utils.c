@@ -33,11 +33,16 @@ struct amiga_sector_header_mfm {
  * @param       bitstream       The bitstream to parse
  * @param       byte_count      The length of the bitstream
  * @param       parsed_sector   This struct is populated with the parsed data.
+ * @param       sector_data_out If this pointer is not null, we will point this
+ *                              pointer to a heap allocated chunk of 512 bytes
+ *                              with the sectors data.
+ *                              NOTE: The callee will have to free this data.
  *
  * @return      Return 0 on success, any negative number is an error.
  */
-int parse_amiga_mfm_sector(const uint8_t *bitstream, size_t byte_count,
-                                        struct amiga_sector *parsed_sector)
+int parse_amiga_mfm_sector(const uint8_t * restrict bitstream, size_t byte_count,
+                                        struct amiga_sector * restrict parsed_sector,
+                                        uint8_t * restrict * restrict sector_data_out)
 {
         memset(parsed_sector, 0x00, sizeof(*parsed_sector));
 
@@ -106,7 +111,7 @@ int parse_amiga_mfm_sector(const uint8_t *bitstream, size_t byte_count,
                 calculated_checksum ^= mfm_header.sector_label_even[i];
         }
 
-        printf("Header Checksum: %08x\n", calculated_checksum);
+        parsed_sector->calculated_header_checksum = calculated_checksum;
 
         calculated_checksum ^= mfm_header.header_checksum_odd;
         calculated_checksum ^= mfm_header.header_checksum_even;
@@ -132,17 +137,20 @@ int parse_amiga_mfm_sector(const uint8_t *bitstream, size_t byte_count,
                 sector_data[i] |= sector_data[i + (512 / 4)] & mask;
         }
 
-        printf("Data Checksum: %08x\n", calculated_checksum);
+        parsed_sector->calculated_data_checksum = calculated_checksum;
+
+        if (sector_data_out) {
+                *sector_data_out = (uint8_t*)sector_data;
+        } else {
+                free(sector_data);
+        }
 
         calculated_checksum ^= mfm_header.data_checksum_odd;
         calculated_checksum ^= mfm_header.data_checksum_even;
         calculated_checksum &= mask;
 
-
-
         parsed_sector->data_checksum_ok = calculated_checksum == 0 ? true : false;
 
-        parsed_sector->data = sector_data;
         return 0;
 }
 

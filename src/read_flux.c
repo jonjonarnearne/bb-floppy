@@ -35,9 +35,6 @@ static uint8_t __attribute__((__unused__)) * samples_to_bitsream(
 static size_t timing_sample_to_bitstream(uint32_t * restrict samples, size_t samples_count,
                                         uint8_t * restrict bitstream, size_t bitstream_size);
 
-//static uint8_t disk_sector_data[512];
-//static uint8_t ipf_sector_data[512];
-
 int read_flux(int argc, char ** argv)
 {
         uint8_t revolutions = 1;
@@ -60,13 +57,15 @@ int read_flux(int argc, char ** argv)
 
         }
 
+        /**
+         * This buffer is used to store all the databytes of the mfm track.
+         */
         uint8_t *mfm_sector_bitstream = malloc(1088 * 11); // Amiga mfm sector byte size times 11 sectors.
         if (!mfm_sector_bitstream) {
                 rc = -1;
                 fprintf(stderr, "Could not allocate bitstream buffer!\n");
                 goto mfm_sector_bitstream_failed;
         }
-        memset(mfm_sector_bitstream, 0xaa, 1088 * 11);
 
         initscr();
         start_color();
@@ -109,7 +108,7 @@ int read_flux(int argc, char ** argv)
 
         struct track_samples track = {0};
 
-        for (unsigned int i = 0; i < 1; i++) {
+        for (unsigned int i = 0; i < 80 * 2; i++) {
                 pru_set_head_side(pru, i & 1 ? PRU_HEAD_LOWER : PRU_HEAD_UPPER);
 
                 werase(status_bar);
@@ -120,6 +119,8 @@ int read_flux(int argc, char ** argv)
                 box(log_window, 0, 0);
                 wrefresh(log_window);
 
+                // Clear the buffer to hold a new track.
+                memset(mfm_sector_bitstream, 0xaa, 1088 * 11);
                 /**
                  * The call to pru_read_timing will allocate a buffer for samples.
                  * Our track.samples variable will point to this buffer.
@@ -127,14 +128,29 @@ int read_flux(int argc, char ** argv)
                  */
                 track.sample_count = pru_read_timing(pru, &track.samples, revolutions, &index_offsets);
                 size_t index = 0;
-                //struct amiga_sector sector;
+                struct amiga_sector sector;
 
                 for (unsigned int sect = 0; sect < 11; ++sect) {
                         wprintw(log_window, "------------ Look for sector sync %d ----------------\n", sect);
                         wrefresh(log_window);
 
+                        /**
+                         * Each mfm sector takes 1088 bytes.
+                         * After stripping the 8 header bytes (aa aa aa aa 44 89 44 89),
+                         * we are left with 1080 bytes.
+                         * The first 56 bytes is the amiga sector header, whis can
+                         * be decoded into 28 regular bytes.
+                         * And the last 1024 bytes will be mfm decoded into 512 bytes
+                         * of data.
+                         */
                         uint8_t *mfm_bitstream_ptr = mfm_sector_bitstream + (1088 * sect);
-                        mfm_bitstream_ptr += 4; // Skip 4 bytes ahead
+
+                        /**
+                         * our timing_sample_to_bitstream(..) function starts by writing
+                         * the sync bytes (44 89 44 89).
+                         * So we skip four bytes ahead to where the sync bytes will be written.
+                         */
+                        mfm_bitstream_ptr += 4;
 
                         if ( find_sync_marker(&track, &index) ) {
                                 wprintw(log_window, "sync found @ index: %u\n", index);
@@ -146,9 +162,8 @@ int read_flux(int argc, char ** argv)
                                 wprintw(log_window, "mfm sector used %u samples\n", consumed);
                                 wrefresh(log_window);
 
-#if 0
                                 // This function returns a heap allocated buffer in sector.data.
-                                int rc = parse_amiga_mfm_sector(mfm_bitstream_ptr, 1084, &sector);
+                                int rc = parse_amiga_mfm_sector(mfm_bitstream_ptr, 1084, &sector, NULL /* Don't keep sector data */);
                                 if (rc == 0) {
                                         const uint8_t track_no = (be32toh(sector.header_info) >> 16) & 0xff;
                                         const uint8_t sector_no = (be32toh(sector.header_info) >> 8) & 0xff;
@@ -179,21 +194,21 @@ int read_flux(int argc, char ** argv)
                                                 break;
                                         }
 
+                                        (void) sector_no;
+                                        (void) track_no;
+                                        mvwaddch(sector_window,
+                                                 1 + sect + ((i & 1) ? 15 : 0),  /* ROW */
+                                                 1 + (i >> 1), /* COL */
+                                                ' ' | A_REVERSE | color);
+#if 0
                                         mvwaddch(sector_window,
                                                  1 + sector_no + ((track_no & 1) ? 15 : 0),  /* ROW */
                                                  1 + (track_no >> 1), /* COL */
                                                 ' ' | A_REVERSE | color);
+#endif
                                         wrefresh(sector_window);
 
-                                        /*
-                                        if (sect == 0) {
-                                                memcpy(disk_sector_data, sector.data, 512);
-                                        }
-                                        */
-
-                                        free(sector.data);
                                 }
-#endif
 
                                 /**
                                  * Move the index pointer, so we don't find the same
@@ -258,7 +273,6 @@ int read_flux(int argc, char ** argv)
         if (memcmp(ipf_sector_data, disk_sector_data, 512)) {
                 fprintf(stderr, "Data mismatch!\n");
         }
-#endif
 
         struct amiga_sector sector;
         const struct CapsImage * track_data = NULL;
@@ -316,6 +330,7 @@ int read_flux(int argc, char ** argv)
         }
         //hexdump(mfm_sector_bitstream, 32);
 
+#endif
         free(mfm_sector_bitstream);
 
 mfm_sector_bitstream_failed:

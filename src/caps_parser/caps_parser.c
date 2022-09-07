@@ -8,6 +8,9 @@
 #include "caps_parser.h"
 #include "../mfm_utils/mfm_utils.h"
 
+#define DO_PRAGMA(x) _Pragma (#x)
+#define TODO(x) DO_PRAGMA(message ("TODO - " #x))
+
 static bool __attribute__((__unused__)) read_track_to_bitstream(
                                 const struct caps_parser * restrict p,
                                 const struct CapsImage * restrict caps_image,
@@ -585,7 +588,7 @@ void caps_parser_show_data(struct caps_parser *p, uint32_t did, uint8_t *sector_
 
 break_loop:
 
-        ret = parse_amiga_mfm_sector(mfm_bitstream + 4, 1084, &sector);
+        ret = parse_amiga_mfm_sector(mfm_bitstream + 4, 1084, &sector, NULL /* Don't take data */);
         if (ret == 0) {
                 printf("sector.header_info: %08x\n", be32toh(sector.header_info));
                 printf("sector.header_sector_label: ");
@@ -601,10 +604,13 @@ break_loop:
                 printf("Header checksum: %s\n", sector.header_checksum_ok ? "OK" : "BAD");
                 printf("Data checksum: %s\n", sector.data_checksum_ok ? "OK" : "BAD");
 
+TODO(Remember to fix this)
+#if 0
                 if (sector_data) {
                         memcpy(sector_data, sector.data, 512);
                 }
                 free(sector.data);
+#endif
         }
 
         free(mfm_bitstream);
