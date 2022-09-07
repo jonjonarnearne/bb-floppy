@@ -267,9 +267,17 @@ int read_flux(int argc, char ** argv)
                 //caps_parser_print_caps_image(track_data);
                 uint8_t *bitstream = caps_parser_get_bitstream_for_track(parser, track_data);
 
+                printf("------- COMPARE ------\n");
+                if (memcmp(bitstream, mfm_sector_bitstream, 1088)) {
+                        printf("Mismatch\n");
+                } else {
+                        printf("Match\n");
+                }
+                printf("---- COMPARE DONE ----\n");
+
                 rc = parse_amiga_mfm_sector(bitstream + 4, 1084, &sector);
                 if (rc == 0) {
-                        printf("ipf bitstream sector:\n");
+                        printf("ipf bitstream:\n");
                         const uint8_t track_no = (be32toh(sector.header_info) >> 16) & 0xff;
                         const uint8_t sector_no = (be32toh(sector.header_info) >> 8) & 0xff;
                         //const uint8_t sector_to_gap = be32toh(sector.header_info) & 0xff;
@@ -283,14 +291,14 @@ int read_flux(int argc, char ** argv)
                         free(sector.data);
                 }
 
-                hexdump(bitstream, 1088);
+                //hexdump(bitstream, 32);
 
                 free(bitstream);
         } else {
                 fprintf(stderr, "Failed to find track 0 head 0 in ipf image!\n");
         }
 
-        printf("mfm bitstream:\n");
+        printf("disk mfm bitstream:\n");
         rc = parse_amiga_mfm_sector(mfm_sector_bitstream + 4, 1084, &sector);
         if (rc == 0) {
                 printf("disk bitstream sector:\n");
@@ -306,7 +314,7 @@ int read_flux(int argc, char ** argv)
                 }
                 free(sector.data);
         }
-        hexdump(mfm_sector_bitstream, 1088);
+        //hexdump(mfm_sector_bitstream, 32);
 
         free(mfm_sector_bitstream);
 

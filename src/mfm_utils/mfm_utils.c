@@ -106,7 +106,7 @@ int parse_amiga_mfm_sector(const uint8_t *bitstream, size_t byte_count,
                 calculated_checksum ^= mfm_header.sector_label_even[i];
         }
 
-        //printf("Header Checksum: %08x\n", calculated_checksum);
+        printf("Header Checksum: %08x\n", calculated_checksum);
 
         calculated_checksum ^= mfm_header.header_checksum_odd;
         calculated_checksum ^= mfm_header.header_checksum_even;
@@ -132,7 +132,7 @@ int parse_amiga_mfm_sector(const uint8_t *bitstream, size_t byte_count,
                 sector_data[i] |= sector_data[i + (512 / 4)] & mask;
         }
 
-        //printf("Data Checksum: %08x\n", calculated_checksum);
+        printf("Data Checksum: %08x\n", calculated_checksum);
 
         calculated_checksum ^= mfm_header.data_checksum_odd;
         calculated_checksum ^= mfm_header.data_checksum_even;

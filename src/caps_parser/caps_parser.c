@@ -762,7 +762,7 @@ static inline uint16_t ipf_to_mfm(uint8_t ipf)
                 if (ipf & bit) {
                         // Set data bit
                         mfm |= 0x01;
-                } else if ((ipf & 0x04) == 0) {
+                } else if ((mfm & 0x04) == 0) {
                         // Add clock bit if needed
                         mfm |= 0x02;
                 }
@@ -781,13 +781,11 @@ static uint16_t *parse_ipf_samples(const uint8_t *samples, size_t num_samples,
                 return NULL;
         }
 
-#error "THERE IS A BUG HERE -- WE GET 0x66 WHICH IS ILLEGAL"
-
         for (unsigned int i = 0; i < num_samples; ++i) {
                 mfm_samples[i] = ipf_to_mfm(samples[i]);
-                if ((prev_sample & 0x0001) == 0x0001) {
+                if (prev_sample & htobe16(0x0001)) {
                         // Clear bit 15
-                        mfm_samples[i] &= ~(1 << 15);
+                        mfm_samples[i] &= ~htobe16(1 << 15);
                 }
                 prev_sample = mfm_samples[i];
         }
