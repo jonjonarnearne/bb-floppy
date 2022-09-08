@@ -248,7 +248,7 @@ uint8_t *caps_parser_get_bitstream_for_track(const struct caps_parser *p,
                 goto error_track_data_not_found;
         }
 
-        print_caps_data(&node->chunk.data);
+        //print_caps_data(&node->chunk.data);
 
         const long caps_block_pos = node->fpos + sizeof node->chunk.data;
         int err = fseek(p->fp, caps_block_pos,  SEEK_SET);
@@ -649,8 +649,10 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
                 return false;
         }
 
+        /*
         printf("sector 0 offset: %u\n", be32toh(sector_info[0].dataoffset));
         printf("Going to read: %u bytes of sampledata\n", sampledata_len);
+        */
 
         int ret = fread(sampledata, 1, sampledata_len, p->fp);
         if (ret != sampledata_len) {
@@ -713,7 +715,7 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
 
                 if (sample_type == 0) {
                         // End!
-                        printf("Found end of sector samples!\n");
+                        //printf("Found end of sector samples!\n");
                 } else if (sample_type == 1) {
 
                         // mark/sync
@@ -749,8 +751,10 @@ break_loop: ; // <- Semicolon to get ridd of compiler error <:)
                         "Wrong amount of data written. Expected %u bytes, but we wrote %u bytes\n",
                                                 expected_bytes, bytes_written);
         } else {
+                /*
                 printf("Wrote %u of %u bytes to bitstream\n",
                                 bytes_written, track_size);
+                */
         }
 
         free(sampledata);
