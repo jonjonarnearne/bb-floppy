@@ -74,10 +74,10 @@ int read_flux(int argc, char ** argv)
         noecho();
 
         init_pair(1, COLOR_BLACK, COLOR_WHITE); // Inverted for statusbar
-        init_pair(2, COLOR_GREEN, COLOR_GREEN); // Good sector.
-        init_pair(3, COLOR_CYAN, COLOR_CYAN); // Bad header
-        init_pair(4, COLOR_YELLOW, COLOR_YELLOW); // Bad data
-        init_pair(5, COLOR_RED, COLOR_RED); // Both bad
+        init_pair(2, COLOR_WHITE, COLOR_GREEN); // Good sector.
+        init_pair(3, COLOR_BLACK, COLOR_CYAN); // Bad header
+        init_pair(4, COLOR_BLACK, COLOR_YELLOW); // Bad data
+        init_pair(5, COLOR_WHITE, COLOR_RED); // Both bad
 
         int row, col;
         getmaxyx(stdscr,row,col);
@@ -103,12 +103,24 @@ int read_flux(int argc, char ** argv)
         pru_start_motor(pru);
         pru_reset_drive(pru);
 
+        nodelay(log_window, TRUE);
+        bool quit_set = false;
 
         pru_set_head_dir(pru, PRU_HEAD_INC);
 
         struct track_samples track = {0};
 
         for (unsigned int i = 0; i < 80 * 2; i++) {
+                int c = wgetch(log_window);
+                switch (c) {
+                case 'q':
+                        quit_set = true;
+                        /* Fall through */
+                case 's':
+                        goto stop_read;
+                default:
+                        break;
+                }
                 pru_set_head_side(pru, i & 1 ? PRU_HEAD_LOWER : PRU_HEAD_UPPER);
 
                 werase(status_bar);
@@ -165,7 +177,7 @@ int read_flux(int argc, char ** argv)
                                 // This function returns a heap allocated buffer in sector.data.
                                 int rc = parse_amiga_mfm_sector(mfm_bitstream_ptr, 1084, &sector, NULL /* Don't keep sector data */);
                                 if (rc == 0) {
-                                        const uint8_t track_no = (be32toh(sector.header_info) >> 16) & 0xff;
+                                        const uint8_t track_info = (be32toh(sector.header_info) >> 16) & 0xff;
                                         const uint8_t sector_no = (be32toh(sector.header_info) >> 8) & 0xff;
                                         //const uint8_t sector_to_gap = be32toh(sector.header_info) & 0xff;
                                         //wprintw(w, "-- [I] Track: %d - head: %d\n", track_info >> 1, track_info & 1);
@@ -194,18 +206,23 @@ int read_flux(int argc, char ** argv)
                                                 break;
                                         }
 
-                                        (void) sector_no;
-                                        (void) track_no;
+                                        (void) track_info;
+
                                         mvwaddch(sector_window,
                                                  1 + sect + ((i & 1) ? 15 : 0),  /* ROW */
-                                                 1 + (i >> 1), /* COL */
-                                                ' ' | A_REVERSE | color);
-#if 0
-                                        mvwaddch(sector_window,
-                                                 1 + sector_no + ((track_no & 1) ? 15 : 0),  /* ROW */
-                                                 1 + (track_no >> 1), /* COL */
-                                                ' ' | A_REVERSE | color);
-#endif
+                                                 1 + ((i >> 1) * 2), /* COL */
+                                                ' ' | color);
+
+                                        if (sector_no < 16) {
+                                                const int ch = sector_no < 9
+                                                             ? '1' + sector_no
+                                                             : 'a' + (sector_no - 9);
+                                                mvwaddch(sector_window,
+                                                         1 + sect + ((i & 1) ? 15 : 0),  /* ROW */
+                                                         1 + ((i >> 1) * 2 + 1), /* COL */
+                                                         ch | color);
+                                        }
+
                                         wrefresh(sector_window);
 
                                 }
@@ -225,6 +242,42 @@ int read_flux(int argc, char ** argv)
 
                 wprintw(log_window, " ---------------- Track Done ---------------------\n");
                 wrefresh(log_window);
+
+                const struct CapsImage * track_data = NULL;
+                bool ret = caps_parser_get_caps_image_for_track_and_head(parser, &track_data, i >> 1, i & 1);
+                if (ret) {
+                        //caps_parser_print_caps_image(track_data);
+                        uint8_t *bitstream = caps_parser_get_bitstream_for_track(parser, track_data);
+
+                        const int color = memcmp(bitstream, mfm_sector_bitstream, 1088) == 0
+                                        ? COLOR_PAIR(2)
+                                        : COLOR_PAIR(5);
+
+                        mvwaddch(sector_window,
+                                 30 + ((i & 1) ? 3 : 0),  /* ROW */
+                                 1 + ((i >> 1) * 2), /* COL */
+                                ' ' | color);
+                        wrefresh(sector_window);
+
+                        /*
+                        rc = parse_amiga_mfm_sector(bitstream + 4, 1084, &sector);
+                        if (rc == 0) {
+                                printf("ipf bitstream:\n");
+                                const uint8_t track_no = (be32toh(sector.header_info) >> 16) & 0xff;
+                                const uint8_t sector_no = (be32toh(sector.header_info) >> 8) & 0xff;
+                                //const uint8_t sector_to_gap = be32toh(sector.header_info) & 0xff;
+                                printf("-- [I] Track: %d - head: %d - Sector: %d\n", track_no >> 1, track_no & 1, sector_no);
+                                if (!sector.data_checksum_ok) {
+                                        fprintf(stderr, "Data checksum bad!\n");
+                                }
+                                if (!sector.header_checksum_ok) {
+                                        fprintf(stderr, "Header checksum bad!\n");
+                                }
+                                free(sector.data);
+                        }
+                        */
+                        free(bitstream);
+                }
                 
                 //r = revolutions - 1;
                 //flux_data = flux_data_init(samples, index_offsets[r], index_offsets, revolutions);
@@ -255,12 +308,18 @@ int read_flux(int argc, char ** argv)
                 }
                 //flux_data_free(flux_data);
         }
+
+stop_read:
         pru_stop_motor(pru);
+
+        nodelay(log_window, false);
 
         mvwprintw(log_window, 10, 2, "DONE!");
         wrefresh(log_window);
 
-        wgetch(log_window);
+        if (! quit_set) {
+                wgetch(log_window);
+        }
 
         delwin(log_window);
         delwin(sector_window);
@@ -269,11 +328,6 @@ int read_flux(int argc, char ** argv)
 
 
 #if 0
-        caps_parser_show_data(parser, 1, ipf_sector_data);
-        if (memcmp(ipf_sector_data, disk_sector_data, 512)) {
-                fprintf(stderr, "Data mismatch!\n");
-        }
-
         struct amiga_sector sector;
         const struct CapsImage * track_data = NULL;
         bool ret = caps_parser_get_caps_image_for_track_and_head(parser, &track_data, 0,0);
