@@ -1,7 +1,7 @@
 #http://www.cs.colby.edu/maxwell/courses/tutorials/maketutor/
 
 CFLAGS+= -Wall -O2 -mtune=cortex-a8 -march=armv7-a -D_POSIX_C_SOURCE=2 -D_BSD_SOURCE=1 -std=c11 -Wall -pedantic -Werror
-LIBS+= -lprussdrv -lm -lncurses
+LIBS+= -lprussdrv -lm -lncurses -ltinfo
 PASM=/usr/bin/pasm
 P_LIBS=
 
