@@ -623,7 +623,7 @@ int pru_read_timing(struct pru * pru, uint32_t ** timing_data,
         uint32_t *raw_timing;
         uint8_t *data_ptr;
 
-        int i, sample_count = 0, extra_samples = 0;
+        int sample_count = 0;
         uint8_t mul = 0;
 
         struct ARM_IF *intf = (struct ARM_IF *)pru->ram;

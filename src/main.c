@@ -208,7 +208,7 @@ static void decode_track(void * p_ram, uint8_t *mfm_track, uint8_t *data_track)
 	uint8_t *mfm_sectors = mfm_track;
 	uint8_t *data_sectors = data_track;
 
-        ram = p_ram + 8;
+        ram = ((uint8_t*)p_ram)+ 8;
 	fprintf(stderr, "Calling deprecated function \"decode_track\"\n");
 
         for (e = 0; e<11; e++) {

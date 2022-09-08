@@ -578,10 +578,9 @@ void parse_timing_data(const uint16_t *timing, int sample_count);
  * */
 int read_timing(int argc, char ** argv)
 {
-	FILE *fp;
         uint16_t *timing;
-	int sample_count, i, e, rc;
-        struct mfm_sector_header *header, *h;
+	int sample_count, i;
+        struct mfm_sector_header *header;
 
         fprintf(stderr, "This command needs fixes - try read_flux or read_track_timing!");
 
@@ -685,7 +684,6 @@ int write_timing(int argc, char ** argv)
 	FILE *fp;
 	int sample_count, c=0, d=0;
 	uint16_t *timing = malloc(45000 * sizeof(*timing));
-        uint16_t val;
 
 	if (!timing) {
 		printf("%s: fatal -- Couldn't allocate memory for buffer!\n",
