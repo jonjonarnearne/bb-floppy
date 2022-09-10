@@ -174,7 +174,6 @@ int read_flux(int argc, char ** argv)
                                 wprintw(log_window, "mfm sector used %u samples\n", consumed);
                                 wrefresh(log_window);
 
-                                // This function returns a heap allocated buffer in sector.data.
                                 int rc = parse_amiga_mfm_sector(mfm_bitstream_ptr, 1084, &sector, NULL /* Don't keep sector data */);
                                 if (rc == 0) {
                                         const uint8_t track_info = (be32toh(sector.header_info) >> 16) & 0xff;
@@ -243,15 +242,44 @@ int read_flux(int argc, char ** argv)
                 wprintw(log_window, " ---------------- Track Done ---------------------\n");
                 wrefresh(log_window);
 
+                /** Check equality with CAPS Image **/
                 const struct CapsImage * track_data = NULL;
                 bool ret = caps_parser_get_caps_image_for_track_and_head(parser, &track_data, i >> 1, i & 1);
                 if (ret) {
                         //caps_parser_print_caps_image(track_data);
                         uint8_t *bitstream = caps_parser_get_bitstream_for_track(parser, track_data);
 
+                        /*
+                        FILE *disk_fp = fopen("disk_dump.bin", "w+");
+                        FILE *ipf_fp = fopen("ipf_dump.bin", "w+");
+
+                        struct amiga_sector ipf_sector;
+                        struct amiga_sector disk_sector;
+                        unsigned int sector_equal = 0;
+                        for (unsigned int sect = 0; sect < 1; ++sect) {
+                                const uint8_t *ipf_ptr = bitstream + (1088 * sect);
+                                const uint8_t *disk_ptr = mfm_sector_bitstream + (1088 * sect);
+                                const int ipf_rc = parse_amiga_mfm_sector(ipf_ptr + 4, 1084, &ipf_sector, NULL);
+                                fwrite(&ipf_sector, sizeof(ipf_sector), 1, ipf_fp);
+                                const int disk_rc = parse_amiga_mfm_sector(disk_ptr + 4, 1084, &disk_sector, NULL);
+                                fwrite(&disk_sector, sizeof(disk_sector), 1, disk_fp);
+                                if (ipf_rc == 0 && disk_rc == 0) {
+                                        const uint8_t ipf_sector_no = (be32toh(ipf_sector.header_info) >> 8) & 0xff;
+                                        const uint8_t disk_sector_no = (be32toh(disk_sector.header_info) >> 8) & 0xff;
+                                        if (ipf_sector_no == disk_sector_no) {
+                                                sector_equal++;
+                                        }
+                                }
+                        }
+                        fwrite(mfm_sector_bitstream, 1088, 11, disk_fp);
+                        fclose(disk_fp);
+                        fwrite(bitstream, 1088, 11, ipf_fp);
+                        fclose(ipf_fp);
+                        */
+
                         const int color = memcmp(bitstream, mfm_sector_bitstream, 1088) == 0
                                         ? COLOR_PAIR(2)
-                                        : COLOR_PAIR(5);
+                                        : COLOR_PAIR(4);
 
                         mvwaddch(sector_window,
                                  30 + ((i & 1) ? 3 : 0),  /* ROW */
@@ -259,54 +287,20 @@ int read_flux(int argc, char ** argv)
                                 ' ' | color);
                         wrefresh(sector_window);
 
-                        /*
-                        rc = parse_amiga_mfm_sector(bitstream + 4, 1084, &sector);
-                        if (rc == 0) {
-                                printf("ipf bitstream:\n");
-                                const uint8_t track_no = (be32toh(sector.header_info) >> 16) & 0xff;
-                                const uint8_t sector_no = (be32toh(sector.header_info) >> 8) & 0xff;
-                                //const uint8_t sector_to_gap = be32toh(sector.header_info) & 0xff;
-                                printf("-- [I] Track: %d - head: %d - Sector: %d\n", track_no >> 1, track_no & 1, sector_no);
-                                if (!sector.data_checksum_ok) {
-                                        fprintf(stderr, "Data checksum bad!\n");
-                                }
-                                if (!sector.header_checksum_ok) {
-                                        fprintf(stderr, "Header checksum bad!\n");
-                                }
-                                free(sector.data);
-                        }
-                        */
                         free(bitstream);
                 }
-                
-                //r = revolutions - 1;
-                //flux_data = flux_data_init(samples, index_offsets[r], index_offsets, revolutions);
 
                 free(track.samples);
                 // Track data is invalid now!
                 memset(&track, 0x00, sizeof(track));
 
                 free(index_offsets);
-                /*
-                printf("Read done! - \n");
-
-                //samples2scp(&converted_data, &timing, samples, revolutions,
-                //                                        index_offsets);
-
-                printf("Converted! - \n");
-
-                //add_scp_track(file, i, converted_data, timing);
-                printf("Written\n");
-                //free(timing);
-                //free(converted_data);
-                */
 
                 if (i % 2) {
                         pru_step_head(pru, 1);
                         wprintw(log_window, "Step head!");
                         wrefresh(log_window);
                 }
-                //flux_data_free(flux_data);
         }
 
 stop_read:
