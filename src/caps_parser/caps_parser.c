@@ -188,7 +188,7 @@ bool caps_parser_get_caps_image_for_track_and_head(const struct caps_parser *p,
 #pragma GCC diagnostic ignored "-Wmultichar"
                 if (node->header.name == 'IMGE') {
 #pragma GCC diagnostic pop
-                        if (be32toh(node->chunk.imge.cylinder) == track ||
+                        if (be32toh(node->chunk.imge.cylinder) == track &&
                             be32toh(node->chunk.imge.head) == head) {
                                 *caps_image = &node->chunk.imge;
                                 return true;
