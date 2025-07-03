@@ -53,12 +53,12 @@
                 "P8.11",        /* Output - Unused */        
                 "P8.12",        /* Output - Unused */        
 
-		"P9.28",        /* Output */
-		"P9.29",        /* Output */
-		"P9.30",        /* Output - Step_Head_Dir */
-		"P9.31",        /* Output */
-		"P9.41",        /* Output */
-		"P9.42",        /* Output */
+		"P9.28",        /* Output - SIDE1 */
+		"P9.29",        /* Output - HEAD STEP */
+		"P9.30",        /* Output - HEAD DIR */
+		"P9.31",        /* Output - WGATE */
+		"P9.41",        /* Output - WDATA */
+		"P9.42",        /* Output - MTRB + BSEL */
         "pru0";
 
 	fragment@0 {

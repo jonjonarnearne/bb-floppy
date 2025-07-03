@@ -124,18 +124,18 @@ struct caps_parser *caps_parser_init(FILE *fp)
                         rc = 0;
                 }
                 if (rc != 1) {
-                        free(n);
                         fprintf(stderr, "Failed to read caps chunk!\n");
+                        free(n);
                         caps_parser_cleanup(p);
                         return NULL;
                 }
 
                 if (n->header.len != expected_len) {
-                        free(n);
-                        caps_parser_cleanup(p);
                         fprintf(stderr,
                                 "Integrity error, expected_len: %u - actual_len: %u\n",
                                                         expected_len, n->header.len);
+                        free(n);
+                        caps_parser_cleanup(p);
                         return NULL;
                 }
 
