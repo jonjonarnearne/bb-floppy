@@ -822,12 +822,14 @@ int main(int argc, char **argv)
 	}
 
 
+        printf("Running pru setup\n");
 	pru = pru_setup();
 	if (!pru)
 		exit(1);
 
         signal(SIGINT, int_handler);
 
+        printf("Running command\n");
 	m->init(mod_argc, mod_argv);
 
 	free(mod_argv);
