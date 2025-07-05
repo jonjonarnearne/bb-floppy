@@ -59,48 +59,40 @@ struct pru * pru_setup(void)
 
         struct pru * pru;
 
-        printf("Init pruss\n");
         tpruss_intc_initdata pruss_intc_initdata = PRUSS_INTC_INITDATA;
 
         /* Initialize PRU */
         prussdrv_init();
 
-        printf("Open pruss evt\n");
         rc = prussdrv_open(PRU_EVTOUT_0);
         if (rc) {
                 fprintf(stderr, "Failed to open pruss device\n");
                 return NULL;
         }
 
-        printf("Initialize pruss interrupts\n");
         /* Get the interrupt initialized */
         prussdrv_pruintc_init(&pruss_intc_initdata);
 
-        printf("Setup pruss PRU0 DATARAM\n");
         rc = prussdrv_map_prumem(PRUSS0_PRU0_DATARAM, (void **)&ram);
         if (rc) {
                 fprintf(stderr, "Failed to setup PRU_DRAM\n");
                 return NULL;
         }
-        printf("Setup pruss SHARED DATARAM\n");
         rc = prussdrv_map_prumem(PRUSS0_SHARED_DATARAM, (void **)&shared_ram);
         if (rc) {
                 fprintf(stderr, "Failed to setup PRU_SHARED_RAM\n");
                 return NULL;
         }
 
-        printf("Zero ram\n");
         memset(ram, 0x00, 0x2000);
         memset(shared_ram, 0x00, 0x3000);
 
-        printf("Malloc pru instance\n");
         pru = malloc(sizeof(*pru));
         if (!pru) {
                 prussdrv_exit();
                 return NULL;
         }
 
-        printf("Write to new instance\n");
         pru->running = 0;
         pru->ram = ram;
         pru->shared_ram = shared_ram;
@@ -114,8 +106,6 @@ struct pru * pru_setup(void)
                 prussdrv_exit();
                 return NULL;
         }
-
-        printf("Wait event\n");
 
         prussdrv_pru_wait_event(PRU_EVTOUT_0);
         prussdrv_pru_clear_event(PRU_EVTOUT_0, PRU0_ARM_INTERRUPT);
