@@ -821,7 +821,6 @@ int main(int argc, char **argv)
 		arg += strlen(argv[i]) + 1;
 	}
 
-
         printf("Running pru setup\n");
 	pru = pru_setup();
 	if (!pru)

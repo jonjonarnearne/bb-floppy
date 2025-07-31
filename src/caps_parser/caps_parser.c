@@ -9,7 +9,8 @@
 #include "../mfm_utils/mfm_utils.h"
 
 #define DO_PRAGMA(x) _Pragma (#x)
-#define TODO(x) DO_PRAGMA(message ("TODO - " #x))
+// #define TODO(x) DO_PRAGMA(message ("TODO - " #x))
+#define TODO(x)
 
 static bool __attribute__((__unused__)) read_track_to_bitstream(
                                 const struct caps_parser * restrict p,
@@ -94,7 +95,7 @@ struct caps_parser *caps_parser_init(FILE *fp)
                 n->fpos = ftell(p->fp);
 
                 const uint32_t printable_name = htobe32(n->header.name);
-                //printf("Name: %.4s\n", (char *)&printable_name);
+                // printf("Name: %.4s\n", (char *)&printable_name);
                 unsigned int expected_len = sizeof n->header;
                 switch (n->header.name) {
 #pragma GCC diagnostic push
@@ -228,6 +229,8 @@ uint8_t *caps_parser_get_bitstream_for_track(const struct caps_parser *p,
 {
         uint8_t *rc = NULL;
         bool found = false;
+	// We have a caps_imge struct.
+	// Now find the related caps_data struct
         struct caps_node *node = p->caps_list_head.next;
         while(node) {
 #pragma GCC diagnostic push
@@ -262,18 +265,19 @@ uint8_t *caps_parser_get_bitstream_for_track(const struct caps_parser *p,
         // trkbits is the complete track size in bits.
         size_t track_size = be32toh(caps_image->trkbits) >> 3; // Div. 8 to get bytes.
 
+	/*
         if (be32toh(caps_image->trkbits) & 0x7) {
                 fprintf(stderr,
                         "Assertion error, track bits isn't evenly divisable by 8\n");
                 goto error_trkbits_out_of_range;
         }
+	*/
 
         if (track_size > INT16_MAX) {
                 fprintf(stderr,
                         "Assertion error, track is more than %d bytes!\n",
                                                                 INT16_MAX);
                 goto error_trkbits_out_of_range;
-                
         }
 
         struct CapsBlock *sector_info = malloc(sizeof(*sector_info) * sector_count);
@@ -290,6 +294,15 @@ uint8_t *caps_parser_get_bitstream_for_track(const struct caps_parser *p,
                 fprintf(stderr, "Failed to read sector_info out of file\n");
                 goto error_read_failed;
         }
+
+	uint32_t total_bits = 0;
+	for (int i = 0; i < sector_count; ++i) {
+		total_bits += be32toh(sector_info[i].blockbits);
+		total_bits += be32toh(sector_info[i].gapbits);
+		// printf("Sector: %d - blockbits: %u\n", i, be32toh(sector_info[i].blockbits));
+		// printf("Sector: %d - gapbits: %u\n", i, be32toh(sector_info[i].gapbits));
+	}
+	printf("Accumulated bits: %u (%u)\n", total_bits, (total_bits / 8));
 
         uint8_t *bitstream = malloc(track_size);
         if (!bitstream) {
@@ -398,8 +411,9 @@ void caps_parser_show_track_info(struct caps_parser *p, unsigned int cylinder,
         }
 }
 
-void caps_parser_show_data(struct caps_parser *p, uint32_t did, uint8_t *sector_data)
+void caps_parser_show_data(struct caps_parser *p, uint32_t did, const uint8_t * sector_data)
 {
+        (void) sector_data;
         // We need a caps image to get all data from the CapsData block.
         struct CapsImage *caps_image;
         bool rc = caps_parser_get_caps_image_for_did(p, &caps_image, did);
@@ -515,7 +529,7 @@ void caps_parser_show_data(struct caps_parser *p, uint32_t did, uint8_t *sector_
                 uint8_t sample_head = *ptr++;
                 uint8_t sample_type = sample_head & 0x1f;
                 uint8_t sizeof_sample_len = sample_head >> 5;
-                
+
                 size_t num_samples = 0;
                 switch(sizeof_sample_len) {
                 case 0:
@@ -530,7 +544,7 @@ void caps_parser_show_data(struct caps_parser *p, uint32_t did, uint8_t *sector_
                         // Single byte - endian doesn't matter.
                         memcpy(&num_samples, ptr, sizeof_sample_len);
                         break;
-                
+
                 case 2: {
                         uint16_t tmp = 0;
                         memcpy(&tmp, ptr, sizeof_sample_len);
@@ -626,6 +640,9 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
         const struct CapsBlock * restrict sector_info, size_t sector_count,
                         uint8_t * restrict bitstream, size_t track_size)
 {
+        (void) sector_count;
+        (void) track_size;
+
         const long expected_pos = data_node->fpos
                                 + sizeof data_node->chunk.data
                                 + be32toh(sector_info[0].dataoffset);
@@ -634,7 +651,8 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
                 fprintf(stderr,
                         "Couldn't read file position!\n");
                 return false;
-        } else if (pos != expected_pos) {
+        }
+        if (pos != expected_pos) {
                 fprintf(stderr,
                         "We are not at correct position in the file!\n");
                 return false;
@@ -672,7 +690,7 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
                 uint8_t sample_head = *ptr++;
                 uint8_t sample_type = sample_head & 0x1f;
                 uint8_t sizeof_sample_len = sample_head >> 5;
-                
+
                 size_t num_samples = 0;
                 switch(sizeof_sample_len) {
                 case 0:
@@ -687,7 +705,7 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
                         // Single byte - endian doesn't matter.
                         memcpy(&num_samples, ptr, sizeof_sample_len);
                         break;
-                
+
                 case 2: {
                         uint16_t tmp = 0;
                         memcpy(&tmp, ptr, sizeof_sample_len);
@@ -728,6 +746,7 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
 
                 } else if (sample_type == 2 /* data */ || sample_type == 3 /* gap */) {
 
+			// printf("Sample type: %s\n", sample_type == 2 ? "DATA" : "GAP");
                         uint16_t *mfm_samples = parse_ipf_samples(ptr, num_samples, prev_sample);
                         prev_sample = mfm_samples[(num_samples * 2) - 1];
 
@@ -762,6 +781,9 @@ break_loop: ; // <- Semicolon to get ridd of compiler error <:)
         return true;
 }
 
+/**
+ * @brief	Helper to convert ipf samples to mfm data
+ */
 static inline uint16_t ipf_to_mfm(uint8_t ipf)
 {
         uint16_t mfm = 0;
@@ -800,7 +822,7 @@ static uint16_t *parse_ipf_samples(const uint8_t *samples, size_t num_samples,
                 prev_sample = mfm_samples[i];
         }
 
-        //hexdump(mfm_samples, num_samples * 2);
+        // hexdump(mfm_samples, num_samples * 2);
 
         return mfm_samples;
 }
@@ -917,7 +939,7 @@ static const char *dentype_to_string(uint32_t dentype)
         case 7:
                 return "Amiga SpeedLock Old";
         case 8:
-                return "Adam Brierley Amiga"; 
+                return "Adam Brierley Amiga";
         case 9:
                 return "Adam Brierley Amiga2";
         default:

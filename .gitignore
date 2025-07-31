@@ -3,6 +3,9 @@
 test_*
 tests/
 build/
+build*/
+.cache/
+compile_commands.json
 scp/
 ADF/
 MFM/

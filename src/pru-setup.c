@@ -548,7 +548,9 @@ int pru_write_timing(struct pru * pru, uint16_t *source,
         int copy_size;
 
         volatile struct ARM_IF *intf = (volatile struct ARM_IF *)pru->ram;
-        if (!pru->running) return sample_count;
+        if (!pru->running) {
+                return sample_count;
+        }
 
         intf->read_count = sample_count;
 
@@ -610,7 +612,7 @@ int pru_write_timing(struct pru * pru, uint16_t *source,
 /*
  * @brief       Read X revolutions of timingdata from current track.
  *
- * @detail      The timing data is represented as units of 10 nano seconds.
+ * @detail      The timing data is represented as counts of 10 nano seconds.
  *
  * @param       pru             <IN>  This PRU object
  * @param       timing_data     <OUT> The samples will be returned to this pointer.

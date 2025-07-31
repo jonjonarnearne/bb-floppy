@@ -42,7 +42,7 @@ int read_flux(int argc, char ** argv)
 
         int rc = 0;
 
-        FILE *ipf_img = fopen("/home/root/IPF-Images/Lemmings2_Disk1.ipf", "rb");
+        FILE *ipf_img = fopen("/home/debian/Lemmings2/Lemmings2_Disk1.ipf", "rb");
         if (!ipf_img) {
                 rc = -1;
                 fprintf(stderr, "Could not open disk image. Error: %s\n", strerror(errno));
@@ -137,6 +137,7 @@ int read_flux(int argc, char ** argv)
                  * The call to pru_read_timing will allocate a buffer for samples.
                  * Our track.samples variable will point to this buffer.
                  * We own this buffer after this call!
+                 * The samples are count * 10 nSecs per flux transition
                  */
                 track.sample_count = pru_read_timing(pru, &track.samples, revolutions, &index_offsets);
                 size_t index = 0;
@@ -432,7 +433,7 @@ static uint8_t *samples_to_bitsream(struct track_samples *track, size_t index, s
          * Without the -2 here, the data will be offset by one bit.
          *
          * TODO:
-         * Investigate if we can set `bit` to 0 and just change 
+         * Investigate if we can set `bit` to 0 and just change
          * the index we return from find_sync_marker(...)
          *
          */
@@ -480,7 +481,7 @@ static size_t timing_sample_to_bitstream(uint32_t * restrict samples, size_t sam
          * Without the -2 here, the data will be offset by one bit.
          *
          * TODO:
-         * Investigate if we can set `bit` to 0 and just change 
+         * Investigate if we can set `bit` to 0 and just change
          * the index we return from find_sync_marker(...)
          *
          */
@@ -530,7 +531,8 @@ static bool find_sync_marker(struct track_samples *track, size_t *index)
          * The following is the timing values to
          * encode 0x44894489 as MFM data timing.
          */
-
+	// TODO: I'd assume the first sample should be MS6 instead of MS4
+	//       as 0xaa is preceeding the sync marker so the preceding bits were 0b10
         static const enum sample_type sync[10] = {
                 MS4, MS8, MS6, MS8, MS6, // 0x4489
                 MS4, MS8, MS6, MS8, MS6  // 0x4489
@@ -543,6 +545,11 @@ static bool find_sync_marker(struct track_samples *track, size_t *index)
          * to see if they match.
          */
         enum sample_type ring_buffer[10] = {UNDEF};
+
+        /*
+         * Multiply count with 10 to get nSec
+         * Divide by 100 to get μSec
+         */
 
         //int sector = 0;
 

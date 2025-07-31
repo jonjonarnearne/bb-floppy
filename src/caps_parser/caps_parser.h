@@ -1,6 +1,7 @@
 #ifndef CAPS_PARSER_H
 #define CAPS_PARSER_H
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdint.h>
 
@@ -137,7 +138,7 @@ void caps_parser_print_caps_image(const struct CapsImage *caps_image);
 void caps_parser_show_file_info(struct caps_parser *p);
 void caps_parser_show_track_info(struct caps_parser *p, unsigned int cylinder,
                                                         unsigned char head);
-void caps_parser_show_data(struct caps_parser *p, uint32_t did, uint8_t *sector_data);
+void caps_parser_show_data(struct caps_parser *p, uint32_t did, const uint8_t *sector_data);
 #endif /* CAPS_PARSER_H */
 
 
