@@ -60,8 +60,8 @@ int read_flux(int argc, char ** argv)
         /**
          * This buffer is used to store all the databytes of the mfm track.
          */
-        uint8_t *mfm_sector_bitstream = malloc(1088 * 11); // Amiga mfm sector byte size times 11 sectors.
-        if (!mfm_sector_bitstream) {
+        uint8_t *disk_track_mfm_bitstream = malloc(1088 * 11); // Amiga mfm sector byte size times 11 sectors.
+        if (!disk_track_mfm_bitstream) {
                 rc = -1;
                 fprintf(stderr, "Could not allocate bitstream buffer!\n");
                 goto mfm_sector_bitstream_failed;
@@ -132,7 +132,7 @@ int read_flux(int argc, char ** argv)
                 wrefresh(log_window);
 
                 // Clear the buffer to hold a new track.
-                memset(mfm_sector_bitstream, 0xaa, 1088 * 11);
+                memset(disk_track_mfm_bitstream, 0xaa, 1088 * 11);
                 /**
                  * The call to pru_read_timing will allocate a buffer for samples.
                  * Our track.samples variable will point to this buffer.
@@ -156,7 +156,7 @@ int read_flux(int argc, char ** argv)
                          * And the last 1024 bytes will be mfm decoded into 512 bytes
                          * of data.
                          */
-                        uint8_t *mfm_bitstream_ptr = mfm_sector_bitstream + (1088 * sect);
+                        uint8_t *mfm_bitstream_ptr = disk_track_mfm_bitstream + (1088 * sect);
 
                         /**
                          * our timing_sample_to_bitstream(..) function starts by writing
@@ -259,7 +259,7 @@ int read_flux(int argc, char ** argv)
                         unsigned int sector_equal = 0;
                         for (unsigned int sect = 0; sect < 1; ++sect) {
                                 const uint8_t *ipf_ptr = bitstream + (1088 * sect);
-                                const uint8_t *disk_ptr = mfm_sector_bitstream + (1088 * sect);
+                                const uint8_t *disk_ptr = disk_track_mfm_bitstream + (1088 * sect);
                                 const int ipf_rc = parse_amiga_mfm_sector(ipf_ptr + 4, 1084, &ipf_sector, NULL);
                                 fwrite(&ipf_sector, sizeof(ipf_sector), 1, ipf_fp);
                                 const int disk_rc = parse_amiga_mfm_sector(disk_ptr + 4, 1084, &disk_sector, NULL);
@@ -272,13 +272,13 @@ int read_flux(int argc, char ** argv)
                                         }
                                 }
                         }
-                        fwrite(mfm_sector_bitstream, 1088, 11, disk_fp);
+                        fwrite(disk_track_mfm_bitstream, 1088, 11, disk_fp);
                         fclose(disk_fp);
                         fwrite(bitstream, 1088, 11, ipf_fp);
                         fclose(ipf_fp);
                         */
 
-                        const int color = memcmp(bitstream, mfm_sector_bitstream, 1088) == 0
+                        const int color = memcmp(bitstream, disk_track_mfm_bitstream, 1088) == 0
                                         ? COLOR_PAIR(2)
                                         : COLOR_PAIR(4);
 
@@ -331,7 +331,7 @@ stop_read:
                 uint8_t *bitstream = caps_parser_get_bitstream_for_track(parser, track_data);
 
                 printf("------- COMPARE ------\n");
-                if (memcmp(bitstream, mfm_sector_bitstream, 1088)) {
+                if (memcmp(bitstream, disk_track_mfm_bitstream, 1088)) {
                         printf("Mismatch\n");
                 } else {
                         printf("Match\n");
@@ -362,7 +362,7 @@ stop_read:
         }
 
         printf("disk mfm bitstream:\n");
-        rc = parse_amiga_mfm_sector(mfm_sector_bitstream + 4, 1084, &sector);
+        rc = parse_amiga_mfm_sector(disk_track_mfm_bitstream + 4, 1084, &sector);
         if (rc == 0) {
                 printf("disk bitstream sector:\n");
                 const uint8_t track_no = (be32toh(sector.header_info) >> 16) & 0xff;
@@ -377,10 +377,10 @@ stop_read:
                 }
                 free(sector.data);
         }
-        //hexdump(mfm_sector_bitstream, 32);
+        //hexdump(disk_track_mfm_bitstream, 32);
 
 #endif
-        free(mfm_sector_bitstream);
+        free(disk_track_mfm_bitstream);
 
 mfm_sector_bitstream_failed:
         caps_parser_cleanup(parser);

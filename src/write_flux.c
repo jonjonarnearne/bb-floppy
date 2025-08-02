@@ -82,7 +82,6 @@ static void write_data_to_disk(const struct write_flux_opts *opts, struct caps_p
                 uint8_t head = track & 0x01;
                 uint8_t cylinder = track / 2;
 
-                printf("Read track: %u, head: %u\n", cylinder, head);
                 bool ret = caps_parser_get_caps_image_for_track_and_head(
                                         parser, &track_info, cylinder, head);
                 if (!ret) {
@@ -93,6 +92,7 @@ static void write_data_to_disk(const struct write_flux_opts *opts, struct caps_p
                 }
 
                 uint16_t *timing_data = NULL;
+                printf("-------------------------------------\nRead track: %u, head: %u\n", cylinder, head);
                 size_t data_len = get_timing_data_from_track(&timing_data, parser, track_info);
 
                 pru_set_head_side(pru, head & 1 ? PRU_HEAD_LOWER : PRU_HEAD_UPPER);
@@ -115,8 +115,15 @@ static size_t get_timing_data_from_track(uint16_t ** timing_data, struct caps_pa
         }
         size_t track_size = be32toh(track_info->trkbits) >> 3; // Div. 8 to get bytes.
         // I get a bitstream buffer here, which I have to free!
-                // This call will call the internal `parse_ipf_samples` function to convert from IPF samples to MFM bitstream
+        // This call will call the internal `parse_ipf_samples` function to convert from IPF samples to MFM bitstream
         uint8_t *bitstream = caps_parser_get_bitstream_for_track(parser, track_info);
+
+        /*
+        for (int i = 0; i < 11; ++i) {
+                hexdump(bitstream + (1088 * i) + 1080, 16); // For bug detection -  look for 0x2a here!
+        }
+        */
+
         int sample_index = 0;
 
         unsigned bit_count = 0;

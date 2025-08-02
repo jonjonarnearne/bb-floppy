@@ -265,13 +265,13 @@ uint8_t *caps_parser_get_bitstream_for_track(const struct caps_parser *p,
         // trkbits is the complete track size in bits.
         size_t track_size = be32toh(caps_image->trkbits) >> 3; // Div. 8 to get bytes.
 
-	/*
+        /*
         if (be32toh(caps_image->trkbits) & 0x7) {
                 fprintf(stderr,
                         "Assertion error, track bits isn't evenly divisable by 8\n");
                 goto error_trkbits_out_of_range;
         }
-	*/
+        */
 
         if (track_size > INT16_MAX) {
                 fprintf(stderr,
@@ -302,7 +302,7 @@ uint8_t *caps_parser_get_bitstream_for_track(const struct caps_parser *p,
 		// printf("Sector: %d - blockbits: %u\n", i, be32toh(sector_info[i].blockbits));
 		// printf("Sector: %d - gapbits: %u\n", i, be32toh(sector_info[i].gapbits));
 	}
-	printf("Accumulated bits: %u (%u)\n", total_bits, (total_bits / 8));
+	// printf("Accumulated bits: %u (%u)\n", total_bits, (total_bits / 8));
 
         uint8_t *bitstream = malloc(track_size);
         if (!bitstream) {
@@ -311,6 +311,8 @@ uint8_t *caps_parser_get_bitstream_for_track(const struct caps_parser *p,
                 goto error_bitstream_alloc_failed;
 
         }
+
+        memset(bitstream, 0xaa, track_size);
 
         found = read_track_to_bitstream(p, caps_image, node,
                                 sector_info, sector_count,
@@ -411,6 +413,7 @@ void caps_parser_show_track_info(struct caps_parser *p, unsigned int cylinder,
         }
 }
 
+#if 0
 void caps_parser_show_data(struct caps_parser *p, uint32_t did, const uint8_t * sector_data)
 {
         (void) sector_data;
@@ -630,6 +633,7 @@ TODO(Remember to fix this)
         free(mfm_bitstream);
         free(sampledata);
 }
+#endif
 
 /**
  * @brief       Read ipf samples out of file.
@@ -641,7 +645,6 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
                         uint8_t * restrict bitstream, size_t track_size)
 {
         (void) sector_count;
-        (void) track_size;
 
         const long expected_pos = data_node->fpos
                                 + sizeof data_node->chunk.data
@@ -672,6 +675,7 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
         printf("Going to read: %u bytes of sampledata\n", sampledata_len);
         */
 
+        // printf("FP: %ld\n", ftell(p->fp));
         int ret = fread(sampledata, 1, sampledata_len, p->fp);
         if (ret != sampledata_len) {
                 fprintf(stderr, "Couldn't read sample data from disk!\n");
@@ -682,6 +686,8 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
         uint8_t *mfm_ptr = bitstream;
 
         uint16_t prev_sample = 0x0000;
+
+        // printf("Reading track: track size: %d - samples: %d!\n", track_size, sampledata_len);
 
         // TODO: Break up this large while loop into smaller sections.
         uint8_t *ptr = sampledata;
@@ -734,24 +740,44 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
                 if (sample_type == 0) {
                         // End!
                         //printf("Found end of sector samples!\n");
+			// printf("Sample type: End\n");
                 } else if (sample_type == 1) {
 
                         // mark/sync
                         // Copy Sync marker into mfm bitstream
+                        /*
+			printf("Sample type: Mark/Sync - num: %u\n", num_samples);
+                        hexdump(ptr, num_samples);
+                        */
+
                         memcpy(mfm_ptr, ptr, num_samples);
                         mfm_ptr += num_samples;
 
-                        //hexdump(ptr, num_samples);
                         prev_sample = htobe16(((uint16_t *)ptr)[(num_samples / 2) - 1]);
 
                 } else if (sample_type == 2 /* data */ || sample_type == 3 /* gap */) {
 
-			// printf("Sample type: %s\n", sample_type == 2 ? "DATA" : "GAP");
+                        /*
+			printf("Sample type: %s - num: %u - gapvalue: 0x%08x - gapbits: %u\n",
+                                sample_type == 2 ? "DATA" : "GAP",
+                                num_samples, sector_info->gapvalue, sector_info->gapbits);
+                        if (sample_type == 2) {
+                                printf("\n");
+                        }
+                        */
+
+                        prev_sample = 0;
                         uint16_t *mfm_samples = parse_ipf_samples(ptr, num_samples, prev_sample);
                         prev_sample = mfm_samples[(num_samples * 2) - 1];
 
                         memcpy(mfm_ptr, mfm_samples, num_samples * 2);
                         mfm_ptr += num_samples * 2;
+
+                        /*
+                        if (sample_type == 2) {
+                                hexdump(ptr, num_samples);
+                        }
+                        */
 
                         free(mfm_samples);
 
@@ -825,6 +851,35 @@ static uint16_t *parse_ipf_samples(const uint8_t *samples, size_t num_samples,
         // hexdump(mfm_samples, num_samples * 2);
 
         return mfm_samples;
+}
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmultichar"
+static const uint32_t IMGE = 'IMGE';
+// static const uint32_t DATA = 'DATA';
+#pragma GCC diagnostic pop
+
+void caps_parser_show_den_types(const struct caps_parser *p)
+{
+        uint32_t arr[16] = {0};
+        struct caps_node *node = p->caps_list_head.next;
+        while(node) {
+                // if (memcmp(&node->header.name, needle, sizeof(*needle)) == 0) {
+                if (node->header.name == IMGE) {
+                        uint32_t type = be32toh(node->chunk.imge.dentype);
+                        if (type < 16) {
+                                arr[type]++;
+                        }
+                }
+                node = node->next;
+        }
+
+        printf("Detected DEN types:\n");
+        for (uint32_t i = 0; i < 16; ++i) {
+                if (arr[i]) {
+                        printf("\t%s: %u\n", dentype_to_string(i), arr[i]);
+                }
+        }
 }
 
 /**

@@ -133,12 +133,14 @@ bool caps_parser_get_caps_image_for_did(const struct caps_parser *p,
 uint8_t *caps_parser_get_bitstream_for_track(const struct caps_parser *p,
                                         const struct CapsImage * caps_image);
 // For printing structs.
+void caps_parser_show_den_types(const struct caps_parser *p);
+
 void caps_parser_print_caps_image(const struct CapsImage *caps_image);
 
 void caps_parser_show_file_info(struct caps_parser *p);
 void caps_parser_show_track_info(struct caps_parser *p, unsigned int cylinder,
                                                         unsigned char head);
-void caps_parser_show_data(struct caps_parser *p, uint32_t did, const uint8_t *sector_data);
+// void caps_parser_show_data(struct caps_parser *p, uint32_t did, const uint8_t *sector_data);
 #endif /* CAPS_PARSER_H */
 
 
