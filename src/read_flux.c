@@ -12,6 +12,7 @@
 #include "pru-setup.h"
 #include "flux_data.h"
 #include "read_flux.h"
+#include "read_flux_opts.h"
 #include "mfm_utils/mfm_utils.h"
 #include "caps_parser/caps_parser.h"
 
@@ -41,8 +42,14 @@ int read_flux(int argc, char ** argv)
         uint32_t *index_offsets;
 
         int rc = 0;
+        struct read_flux_opts opts = {0};
+        bool success = read_flux_opts_parse(&opts, argc, argv);
+        if (!success) {
+                read_flux_opts_print_usage(argv);
+                goto fopen_failed;
+        }
 
-        FILE *ipf_img = fopen("/home/debian/Lemmings2/Lemmings2_Disk1.ipf", "rb");
+        FILE *ipf_img = fopen(opts.filename, "rb");
         if (!ipf_img) {
                 rc = -1;
                 fprintf(stderr, "Could not open disk image. Error: %s\n", strerror(errno));
