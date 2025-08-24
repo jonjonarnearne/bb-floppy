@@ -4,3 +4,5 @@ add_executable(
   caps-parser
   test_parser.c caps_parser.c "${CMAKE_SOURCE_DIR}/src/mfm_utils/mfm_utils.c"
   "${CMAKE_SOURCE_DIR}/src/write_flux_opts.c")
+
+add_executable(caps-samples-to_mfm test_caps_samples.c)
