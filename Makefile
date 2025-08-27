@@ -24,6 +24,7 @@ SRCS=src/main.c \
      src/list.c \
      src/flux_data.c \
      src/read_flux.c \
+     src/read_flux_opts.c \
      src/write_flux.c \
      src/write_flux_opts.c \
      src/caps_parser/caps_parser.c \

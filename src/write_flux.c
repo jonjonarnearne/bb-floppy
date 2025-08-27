@@ -118,11 +118,9 @@ static size_t get_timing_data_from_track(uint16_t ** timing_data, struct caps_pa
         // This call will call the internal `parse_ipf_samples` function to convert from IPF samples to MFM bitstream
         uint8_t *bitstream = caps_parser_get_bitstream_for_track(parser, track_info);
 
-        /*
         for (int i = 0; i < 11; ++i) {
-                hexdump(bitstream + (1088 * i) + 1080, 16); // For bug detection -  look for 0x2a here!
+                hexdump(bitstream + (1088 * i), 16); // For bug detection -  look for 0x2a here!
         }
-        */
 
         int sample_index = 0;
 
