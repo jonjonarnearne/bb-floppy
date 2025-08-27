@@ -16,7 +16,7 @@
 extern struct pru * pru;
 
 static void write_data_to_disk(const struct write_flux_opts *opts, struct caps_parser *parser);
-static size_t get_timing_data_from_track(uint16_t ** timing_data, struct caps_parser *parser, const struct CapsImage *track_info);
+static size_t bitstream_to_timing_samples(uint16_t ** timing_data, const uint8_t *bitstream, size_t track_size);
 
 /**
  * @brief       Entry point. Called from main.c
@@ -91,35 +91,44 @@ static void write_data_to_disk(const struct write_flux_opts *opts, struct caps_p
                         return;
                 }
 
+                size_t track_size = be32toh(track_info->trkbits) >> 3; // Div. 8 to get bytes.
+
+                // I get a bitstream buffer here, which I have to free!
+                // This call will call the internal `parse_ipf_samples` function to convert from IPF samples to MFM bitstream
+                uint8_t *bitstream = caps_parser_get_bitstream_for_track(parser, track_info);
+
+                /*
+                for (int i = 0; i < 11; ++i) {
+                        hexdump(bitstream + (1088 * i), 16); // For bug detection -  look for 0x2a here!
+                }
+                */
+
                 uint16_t *timing_data = NULL;
                 printf("-------------------------------------\nRead track: %u, head: %u\n", cylinder, head);
-                size_t data_len = get_timing_data_from_track(&timing_data, parser, track_info);
+                size_t data_len = bitstream_to_timing_samples(&timing_data, bitstream, track_size);
+
+                free(bitstream);
+                if (data_len == 0) {
+                        break;
+                }
 
                 pru_set_head_side(pru, head & 1 ? PRU_HEAD_LOWER : PRU_HEAD_UPPER);
                 pru_write_timing(pru, timing_data, data_len);
+
                 free(timing_data);
 
                 track += opts->head == -1 ? 1 : 2;
                 if (opts->head != -1 || track % 2 == 0) {
                         pru_step_head(pru, 1);
                 }
-
         } while(track < last_track);
 }
 
-static size_t get_timing_data_from_track(uint16_t ** timing_data, struct caps_parser *parser, const struct CapsImage *track_info)
+static size_t bitstream_to_timing_samples(uint16_t ** timing_data, const uint8_t *bitstream, size_t track_size)
 {
         uint16_t *samples = malloc(sizeof(*samples) * (1u << 16));
         if (!samples) {
                 return 0;
-        }
-        size_t track_size = be32toh(track_info->trkbits) >> 3; // Div. 8 to get bytes.
-        // I get a bitstream buffer here, which I have to free!
-        // This call will call the internal `parse_ipf_samples` function to convert from IPF samples to MFM bitstream
-        uint8_t *bitstream = caps_parser_get_bitstream_for_track(parser, track_info);
-
-        for (int i = 0; i < 11; ++i) {
-                hexdump(bitstream + (1088 * i), 16); // For bug detection -  look for 0x2a here!
         }
 
         int sample_index = 0;
@@ -152,7 +161,6 @@ static size_t get_timing_data_from_track(uint16_t ** timing_data, struct caps_pa
                 }
         }
 
-        free(bitstream);
         printf("Bit count: %u (samples: %d)\n", bit_count, sample_index);
         *timing_data = samples;
         return sample_index;
@@ -160,7 +168,6 @@ static size_t get_timing_data_from_track(uint16_t ** timing_data, struct caps_pa
 error_buffer_overflow:
 
         fprintf(stderr, "Sample buffer overflow!");
-        free(bitstream);
         free(samples);
         return 0;
 }
