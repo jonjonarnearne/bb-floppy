@@ -457,8 +457,10 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
                 return false;
         }
 
+        /*
         uint32_t did = be32toh(data_node->chunk.data.did);
         printf("DID: %u\n", did);
+        */
 
         uint8_t *mfm_ptr = bitstream;
 
@@ -522,8 +524,8 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
 
                         // mark/sync
                         // Copy Sync marker into mfm bitstream
-			printf("%d: Sample type: Mark/Sync - num: %u\n", sector, num_samples);
                         /*
+			printf("%d: Sample type: Mark/Sync - num: %u\n", sector, num_samples);
                         hexdump(caps_data_ptr, num_samples);
                         */
 
