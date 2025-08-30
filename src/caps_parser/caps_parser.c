@@ -414,228 +414,6 @@ void caps_parser_show_track_info(struct caps_parser *p, unsigned int cylinder,
         }
 }
 
-#if 0
-void caps_parser_show_data(struct caps_parser *p, uint32_t did, const uint8_t * sector_data)
-{
-        (void) sector_data;
-        // We need a caps image to get all data from the CapsData block.
-        struct CapsImage *caps_image;
-        bool rc = caps_parser_get_caps_image_for_did(p, &caps_image, did);
-        if (!rc) {
-                fprintf(stderr, "Could not get CapsImage for did: %u\n", did);
-                return;
-        }
-
-        bool found = false;
-        struct caps_node *node = p->caps_list_head.next;
-        while(node) {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmultichar"
-                if (node->header.name == 'DATA') {
-#pragma GCC diagnostic pop
-                        if (be32toh(node->chunk.data.did) == did) {
-                                found = true;
-                                break;
-                        }
-                }
-                node = node->next;
-        }
-
-        if (!found) {
-                fprintf(stderr, "Could not find DATA data for did: %u\n", did);
-                return;
-        }
-
-        print_caps_data(&node->chunk.data);
-
-        // First set this to start pos of block data.
-        long expected_end_fpos = node->fpos + sizeof node->chunk.data;
-        fseek(p->fp, expected_end_fpos,  SEEK_SET);
-
-        uint32_t offsets[11] = {0};
-        struct CapsBlock caps_block;
-        for (unsigned int i = 0; i < be32toh(caps_image->blkcnt); ++i) {
-                int r = fread(&caps_block, sizeof caps_block, 1, p->fp);
-                if (r != 1) {
-                        fprintf(stderr, "Failed to read CapsBlock out of file\n");
-                        return;
-                }
-                printf("Block %u\n", i);
-                if (i == 0) {
-                        expected_end_fpos += be32toh(caps_block.dataoffset);
-                }
-                print_caps_block(&caps_block);
-
-                if (i < 11) {
-                        offsets[i] = be32toh(caps_block.dataoffset);
-                } else {
-                        fprintf(stderr, "Warning .. Sector no: %u - not storing offset!\n", i);
-                }
-        }
-
-        const long fpos = node->fpos + sizeof node->chunk.data;
-        const long cur = ftell(p->fp);
-        printf("Node pos: %ld - Cur pos: %ld - Diff: %ld\n",
-                                        fpos, cur, cur - fpos);
-        if (expected_end_fpos != cur) {
-                // Expect the file ptr to be at start of sample data now.
-                fprintf(stderr,
-                        "Integrety error Expected fpos: %ld - Current fpos: %ld\n",
-                                        expected_end_fpos, cur);
-        }
-
-        /*** READ SAMPLES FOR SINGLE SECTOR ***/
-        printf("Sample size: %u\n",
-                be32toh(node->chunk.data.size) - (sizeof caps_block  * 11));
-
-        struct amiga_sector sector = {0};
-
-        size_t sampledata_len = be32toh(node->chunk.data.size) - (sizeof caps_block * 11);
-        // We read the ipf samples for a single sector from the ipf file into this buffer.
-        uint8_t *sampledata = malloc(sampledata_len);
-        if (!sampledata) {
-                fprintf(stderr, "Memory allocation for sampledata failed!\n");
-                return;
-        }
-
-        int ret = fread(sampledata, 1, sampledata_len, p->fp);
-        if (ret != sampledata_len) {
-                fprintf(stderr, "Couldn't read sample data from disk!\n");
-                free(sampledata);
-                return;
-        }
-
-        /**
-         * This buffer will hold all bits for a complete sector,
-         * after transforming from ipf samples to mfm bits.
-         * The size of this buffer can be read by doing:
-         *
-         *     be32toh(caps_block[sector].blockbits) / 8
-         *
-         * This should yield 1088 for regular amiga sectors.
-         */
-        uint8_t *mfm_bitstream = malloc(1088);
-        if (!mfm_bitstream) {
-                fprintf(stderr, "Couldn't allocate buffer for sector bitstream\n");
-                free(sampledata);
-                return;
-        }
-
-        /*** PARSE IPF SAMPLES FOR SINGLE SECTOR / CONVERT TO MFM BITSTREAM ***/
-        // The ipf sample parser must keep track of the previous sample for correct clock pulses.
-        uint16_t prev_sample = 0x0000;
-
-        // TODO: Break up this large while loop into smaller sections.
-        uint8_t *mfm_ptr = mfm_bitstream; // Used for output.
-        uint8_t *ptr = sampledata;
-        const uint8_t *endptr = ptr + (offsets[1] - offsets[0]);
-        while(ptr < endptr) {
-                uint8_t sample_head = *ptr++;
-                uint8_t sample_type = sample_head & 0x1f;
-                uint8_t sizeof_sample_len = sample_head >> 5;
-
-                size_t num_samples = 0;
-                switch(sizeof_sample_len) {
-                case 0:
-                        if (sample_type != 0) {
-                                fprintf(stderr,
-                                        "Integrety error. Got size 0 for a %s sample\n",
-                                        sampletype_to_string(sample_type));
-                                goto break_loop;
-                        }
-                        break;
-                case 1:
-                        // Single byte - endian doesn't matter.
-                        memcpy(&num_samples, ptr, sizeof_sample_len);
-                        break;
-
-                case 2: {
-                        uint16_t tmp = 0;
-                        memcpy(&tmp, ptr, sizeof_sample_len);
-                        num_samples = be16toh(tmp);
-                        break;
-                }
-                case 4: {
-                        uint32_t tmp = 0;
-                        memcpy(&tmp, ptr, sizeof_sample_len);
-                        num_samples = be32toh(tmp);
-                        break;
-                }
-                default:
-                        fprintf(stderr,
-                                "Sample parsing failed on `sizeof_sample_len`: %u\n",
-                                                                        sizeof_sample_len);
-                        goto break_loop;
-                }
-
-                ptr += sizeof_sample_len;
-                /*
-                printf("Num samples: %u of type: %s (%u)\n", num_samples,
-                                sampletype_to_string(sample_type), sample_type);
-                */
-
-                if (sample_type == 0) {
-                        // End!
-                        printf("Found end of sector samples!\n");
-                } else if (sample_type == 1) {
-
-                        // mark/sync
-                        // Copy Sync marker into mfm bitstream
-                        memcpy(mfm_ptr, ptr, num_samples);
-                        mfm_ptr += num_samples;
-
-                        //hexdump(ptr, num_samples);
-                        prev_sample = htobe16(((uint16_t *)ptr)[(num_samples / 2) - 1]);
-
-                } else if (sample_type == 2 /* data */ || sample_type == 3 /* gap */) {
-
-                        uint16_t *mfm_samples = parse_ipf_samples(ptr, num_samples, prev_sample);
-                        prev_sample = mfm_samples[(num_samples * 2) - 1];
-
-                        memcpy(mfm_ptr, mfm_samples, num_samples * 2);
-                        mfm_ptr += num_samples * 2;
-
-                        free(mfm_samples);
-
-                } else {
-                        fprintf(stderr, "Unexpected sample type: %u\n", sample_type);
-                }
-
-                ptr += num_samples;
-        }
-
-break_loop:
-
-        ret = parse_amiga_mfm_sector(mfm_bitstream + 4, 1084, &sector, NULL /* Don't take data */);
-        if (ret == 0) {
-                printf("sector.header_info: %08x\n", be32toh(sector.header_info));
-                printf("sector.header_sector_label: ");
-                for (unsigned int i = 0; i < 4; ++i) {
-                        printf("%08x ", be32toh(sector.header_sector_label[i]));
-                }
-                printf("\n");
-                const uint8_t track_no = (be32toh(sector.header_info) >> 16) & 0xff;
-                const uint8_t sector_no = (be32toh(sector.header_info) >> 8) & 0xff;
-                //const uint8_t sector_to_gap = be32toh(sector.header_info) & 0xff;
-                printf("Sector: %u\n", sector_no);
-                printf("Track: %u - head: %u\n", track_no >> 1, track_no & 1);
-                printf("Header checksum: %s\n", sector.header_checksum_ok ? "OK" : "BAD");
-                printf("Data checksum: %s\n", sector.data_checksum_ok ? "OK" : "BAD");
-
-TODO(Remember to fix this)
-#if 0
-                if (sector_data) {
-                        memcpy(sector_data, sector.data, 512);
-                }
-                free(sector.data);
-#endif
-        }
-
-        free(mfm_bitstream);
-        free(sampledata);
-}
-#endif
-
 /**
  * @brief       Read ipf samples out of file.
  */
@@ -663,29 +441,24 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
                 return false;
         }
 
-        const size_t sampledata_len = be32toh(data_node->chunk.data.size)
+        const size_t caps_data_data_len = be32toh(data_node->chunk.data.size)
                                     - be32toh(sector_info[0].dataoffset);
         // We read the ipf samples for a single sector from the ipf file into this buffer.
-        uint8_t *sampledata = malloc(sampledata_len);
-        if (!sampledata) {
-                fprintf(stderr, "Memory allocation for sampledata failed!\n");
+        uint8_t *caps_data_data = malloc(caps_data_data_len);
+        if (!caps_data_data) {
+                fprintf(stderr, "Memory allocation for caps_data_data failed!\n");
+                return false;
+        }
+
+        int ret = fread(caps_data_data, 1, caps_data_data_len, p->fp);
+        if (ret != caps_data_data_len) {
+                fprintf(stderr, "Couldn't read sample data from disk!\n");
+                free(caps_data_data);
                 return false;
         }
 
         uint32_t did = be32toh(data_node->chunk.data.did);
         printf("DID: %u\n", did);
-        /*
-        printf("sector 0 offset: %u\n", be32toh(sector_info[0].dataoffset));
-        printf("Going to read: %u bytes of sampledata\n", sampledata_len);
-        */
-
-        // printf("FP: %ld\n", ftell(p->fp));
-        int ret = fread(sampledata, 1, sampledata_len, p->fp);
-        if (ret != sampledata_len) {
-                fprintf(stderr, "Couldn't read sample data from disk!\n");
-                free(sampledata);
-                return false;
-        }
 
         uint8_t *mfm_ptr = bitstream;
 
@@ -693,15 +466,15 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
 
         int sector = 0;
 
-        // printf("Reading track: track size: %d - samples: %d!\n", track_size, sampledata_len);
+        // printf("Reading track: track size: %d - samples: %d!\n", track_size, caps_data_data_len);
 
         // TODO: Break up this large while loop into smaller sections.
-        uint8_t *ptr = sampledata;
-        const uint8_t *endptr = ptr + sampledata_len;
-        while(ptr < endptr) {
-                uint8_t sample_head = *ptr++;
-                uint8_t sample_type = sample_head & 0x1f;
-                uint8_t sizeof_sample_len = sample_head >> 5;
+        const uint8_t * caps_data_ptr = caps_data_data;
+        const uint8_t * const endptr = caps_data_ptr + caps_data_data_len;
+        while(caps_data_ptr < endptr) {
+                const uint8_t sample_head = *caps_data_ptr++;
+                const uint8_t sample_type = sample_head & 0x1f;
+                const uint8_t sizeof_sample_len = sample_head >> 5;
 
                 size_t num_samples = 0;
                 switch(sizeof_sample_len) {
@@ -715,18 +488,18 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
                         break;
                 case 1:
                         // Single byte - endian doesn't matter.
-                        memcpy(&num_samples, ptr, sizeof_sample_len);
+                        memcpy(&num_samples, caps_data_ptr, sizeof_sample_len);
                         break;
 
                 case 2: {
                         uint16_t tmp = 0;
-                        memcpy(&tmp, ptr, sizeof_sample_len);
+                        memcpy(&tmp, caps_data_ptr, sizeof_sample_len);
                         num_samples = be16toh(tmp);
                         break;
                 }
                 case 4: {
                         uint32_t tmp = 0;
-                        memcpy(&tmp, ptr, sizeof_sample_len);
+                        memcpy(&tmp, caps_data_ptr, sizeof_sample_len);
                         num_samples = be32toh(tmp);
                         break;
                 }
@@ -737,7 +510,7 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
                         goto break_loop;
                 }
 
-                ptr += sizeof_sample_len;
+                caps_data_ptr += sizeof_sample_len;
 
                 if (sample_type == 0) {
                         // End!
@@ -751,18 +524,18 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
                         // Copy Sync marker into mfm bitstream
 			printf("%d: Sample type: Mark/Sync - num: %u\n", sector, num_samples);
                         /*
-                        hexdump(ptr, num_samples);
+                        hexdump(caps_data_ptr, num_samples);
                         */
 
-                        memcpy(mfm_ptr, ptr, num_samples);
+                        memcpy(mfm_ptr, caps_data_ptr, num_samples);
                         mfm_ptr += num_samples;
 
-                        prev_sample = ptr[num_samples - 1];
+                        prev_sample = caps_data_ptr[num_samples - 1];
 
                 } else if (sample_type == 2 /* data */ || sample_type == 3 /* gap */) {
                         // These samples are the data bytes or gap bytes without MFM encoding
 
-                        uint16_t *mfm_samples = parse_ipf_samples(ptr, num_samples, prev_sample);
+                        uint16_t *mfm_samples = parse_ipf_samples(caps_data_ptr, num_samples, prev_sample);
                         uint16_t last_sample = mfm_samples[num_samples - 1];
                         prev_sample = last_sample >> 8;
 
@@ -778,7 +551,7 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
                         fprintf(stderr, "Unexpected sample type: %u\n", sample_type);
                 }
 
-                ptr += num_samples;
+                caps_data_ptr += num_samples;
         }
 
 break_loop: ; // <- Semicolon to get ridd of compiler error <:)
@@ -795,7 +568,7 @@ break_loop: ; // <- Semicolon to get ridd of compiler error <:)
                 */
         }
 
-        free(sampledata);
+        free(caps_data_data);
 
         return true;
 }
