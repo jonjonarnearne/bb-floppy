@@ -1,6 +1,5 @@
 *.swp
 *~
-test_*
 tests/
 build/
 build*/
