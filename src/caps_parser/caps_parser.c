@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+#include <stddef.h>
 
 #include "caps_parser.h"
 #include "../mfm_utils/mfm_utils.h"
@@ -645,6 +646,7 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
                         uint8_t * restrict bitstream, size_t track_size)
 {
         (void) sector_count;
+        (void) track_size;
 
         const long expected_pos = data_node->fpos
                                 + sizeof data_node->chunk.data
@@ -670,6 +672,8 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
                 return false;
         }
 
+        uint32_t did = be32toh(data_node->chunk.data.did);
+        printf("DID: %u\n", did);
         /*
         printf("sector 0 offset: %u\n", be32toh(sector_info[0].dataoffset));
         printf("Going to read: %u bytes of sampledata\n", sampledata_len);
@@ -685,7 +689,9 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
 
         uint8_t *mfm_ptr = bitstream;
 
-        uint16_t prev_sample = 0x0000;
+        uint8_t prev_sample = 0xaa;
+
+        int sector = 0;
 
         // printf("Reading track: track size: %d - samples: %d!\n", track_size, sampledata_len);
 
@@ -732,54 +738,41 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
                 }
 
                 ptr += sizeof_sample_len;
-                /*
-                printf("Num samples: %u of type: %s (%u)\n", num_samples,
-                                sampletype_to_string(sample_type), sample_type);
-                */
 
                 if (sample_type == 0) {
                         // End!
                         //printf("Found end of sector samples!\n");
 			// printf("Sample type: End\n");
                 } else if (sample_type == 1) {
+                        // This sample is MFM encoded
+                        // Usually 0x4489 0x4489
 
                         // mark/sync
                         // Copy Sync marker into mfm bitstream
+			printf("%d: Sample type: Mark/Sync - num: %u\n", sector, num_samples);
                         /*
-			printf("Sample type: Mark/Sync - num: %u\n", num_samples);
                         hexdump(ptr, num_samples);
                         */
 
                         memcpy(mfm_ptr, ptr, num_samples);
                         mfm_ptr += num_samples;
 
-                        prev_sample = htobe16(((uint16_t *)ptr)[(num_samples / 2) - 1]);
+                        prev_sample = ptr[num_samples - 1];
 
                 } else if (sample_type == 2 /* data */ || sample_type == 3 /* gap */) {
+                        // These samples are the data bytes or gap bytes without MFM encoding
 
-                        /*
-			printf("Sample type: %s - num: %u - gapvalue: 0x%08x - gapbits: %u\n",
-                                sample_type == 2 ? "DATA" : "GAP",
-                                num_samples, sector_info->gapvalue, sector_info->gapbits);
-                        if (sample_type == 2) {
-                                printf("\n");
-                        }
-                        */
-
-                        prev_sample = 0;
                         uint16_t *mfm_samples = parse_ipf_samples(ptr, num_samples, prev_sample);
-                        prev_sample = mfm_samples[(num_samples * 2) - 1];
+                        uint16_t last_sample = mfm_samples[num_samples - 1];
+                        prev_sample = last_sample >> 8;
 
                         memcpy(mfm_ptr, mfm_samples, num_samples * 2);
                         mfm_ptr += num_samples * 2;
 
-                        /*
-                        if (sample_type == 2) {
-                                hexdump(ptr, num_samples);
-                        }
-                        */
-
                         free(mfm_samples);
+                        if (num_samples * 2 == 1080) {
+                                sector++;
+                        }
 
                 } else {
                         fprintf(stderr, "Unexpected sample type: %u\n", sample_type);
