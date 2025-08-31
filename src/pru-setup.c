@@ -27,11 +27,12 @@ void hexdump(const void *b, size_t len)
     for (i=0; i < len; i++) {
         if (i && !(i % 16)) {
             *c = '\0';
-            printf("%s\n", str);
+            printf(" %s\n", str);
             c = str;
         }
-        if (!(i % 16))
-                printf("0x%04X: ", i);
+        if (!(i % 16)) {
+                printf("%08x: ", i);
+        }
         *c++ = (*buf < 128 && *buf > 32) ? *buf : '.';
         printf("%02x ", *buf++);
     }

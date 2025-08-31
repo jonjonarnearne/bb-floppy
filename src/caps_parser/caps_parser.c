@@ -537,9 +537,14 @@ static bool read_track_to_bitstream( const struct caps_parser * restrict p,
                 } else if (sample_type == 2 /* data */ || sample_type == 3 /* gap */) {
                         // These samples are the data bytes or gap bytes without MFM encoding
 
-                        uint16_t *mfm_samples = parse_ipf_samples(caps_data_ptr, num_samples, prev_sample);
+                        uint16_t *mfm_samples = parse_ipf_samples(caps_data_ptr, num_samples, prev_sample << 8);
                         uint16_t last_sample = mfm_samples[num_samples - 1];
                         prev_sample = last_sample >> 8;
+                        /*
+                        if (prev_sample & 0x01) {
+                                printf("[0x%02x] has bit 0 set!\n", prev_sample);
+                        }
+                        */
 
                         memcpy(mfm_ptr, mfm_samples, num_samples * 2);
                         mfm_ptr += num_samples * 2;

@@ -74,6 +74,10 @@ static void write_data_to_disk(const struct write_flux_opts *opts, struct caps_p
         unsigned last_track = (opts->track == -1 ? 79 : opts->track) * 2;
         unsigned track = opts->track == -1 ? 0 : opts->track * 2;
 
+        if (opts->track > 0) {
+                pru_step_head(pru, opts->track);
+        }
+
         if (opts->head == -1) {
                 last_track += 2;
         } else if (opts->head == 1) {
@@ -108,6 +112,17 @@ static void write_data_to_disk(const struct write_flux_opts *opts, struct caps_p
                         hexdump(bitstream + (1088 * i), 16); // For bug detection -  look for 0x2a here!
                 }
                 */
+
+                // TODO: Investigate single bit fault.
+                //       Consistently reproduced in MonkeyIsland2_Disk1.ipf -t0 -h0
+                //       In amiga sector 4 at sector index 9.
+                //       Offset 0x1dc - Got 0x51 expected 0x55
+                //       Sample index: 0x8970
+                // 
+                //       Sometimes reproduced in MonkeyIsland2_Disk1.ipf -t0 -h1
+                //       In amiga sector 9 at sector index 9.
+                //       Offset 0x1ed - Got 0x11 expected 0x15
+                //       Sample index: 0x8330
 
                 uint16_t *timing_data = NULL;
                 printf("-------------------------------------\nRead track: %u, head: %u\n", cylinder, head);
@@ -211,26 +226,28 @@ static bool find_sync_in_read_samples(const uint32_t *samples, int count, int *f
 static size_t timing_sample_to_bitstream(const uint32_t * restrict samples, size_t samples_count,
                                         uint8_t * restrict bitstream, size_t bitstream_size);
 
+#define CLEAR "\033[0m"
+#define RED "\033[0;31m"
 /**
  * Check that the newly written bitstream is correct!
  */
 static void verify_read_samples(uint32_t *samples, int sample_count)
 {
-        int i = 0;
-        bool rc = find_sync_in_read_samples(samples, sample_count, &i);
-        if (!rc) {
-                printf("-- NO SYNC!\n");
-                return;
-        }
-
-        printf("Found sync in read samples at index: %d\n", i);
-
         // We must convert the samples (flux timing to a bitstream)
         uint8_t *bitstream = malloc(1088 * 11);
         if (!bitstream) {
-                fprintf(stderr, "Could not malloc bitstream for track verification!\n");
+                fprintf(stderr, RED "Could not malloc bitstream for track verification!\n" CLEAR);
                 return;
         }
+
+        int i = 0;
+        bool rc = find_sync_in_read_samples(samples, sample_count, &i);
+        if (!rc) {
+                fprintf(stderr, RED "No sync marker found in track\n" CLEAR);
+                return;
+        }
+
+        // printf("Found sync in read samples at index: %d\n", i);
 
         bitstream[0] = 0xaa;
         bitstream[1] = 0xaa;
@@ -242,13 +259,35 @@ static void verify_read_samples(uint32_t *samples, int sample_count)
                 sample_count - i,
                 bitstream + 4, (1088 * 11) - 4);
 
-        printf("Consumed %d samples\n", consumed);
+        (void) consumed;
+        // printf("Consumed %d samples\n", consumed);
 
+        /*
         hexdump(bitstream, 16);
         hexdump(bitstream + 1084, 16);
+        */
 
         // Now convert the bitstream to amiga sectors
 
+        for (int i = 0; i < 11; ++i) {
+                struct amiga_sector sector;
+                int parse_ok = parse_amiga_mfm_sector(bitstream + (1088 * i) + 4, 1084, &sector, NULL /* Don't keep sector data */);
+                if (parse_ok == 0 && (!sector.data_checksum_ok || !sector.header_checksum_ok)) {
+                        const uint8_t track_info = (be32toh(sector.header_info) >> 16) & 0xff;
+                        const uint8_t sector_no = (be32toh(sector.header_info) >> 8) & 0xff;
+                        //const uint8_t sector_to_gap = be32toh(sector.header_info) & 0xff;
+                        printf("Hexdump: sector %d after index\n", i);
+                        hexdump(bitstream + (1088 * i), 1096);
+                        printf("-- [I] Track: %d - head: %d - sector: %u - data_ok: %s - header_ok: %s\n",
+                                        track_info >> 1, track_info & 1, sector_no,
+                                        sector.data_checksum_ok ? "YES" : "NO",
+                                        sector.header_checksum_ok ? "YES" : "NO");
+                } else if (parse_ok != 0) {
+                        fprintf(stderr, RED "Could not parse amiga sector: %i\n" CLEAR, i);
+                }
+        }
+
+#if 0
         struct amiga_sector sector;
         int parse_ok = parse_amiga_mfm_sector(bitstream + 4, 1084, &sector, NULL /* Don't keep sector data */);
         if (parse_ok == 0 && (!sector.data_checksum_ok || !sector.header_checksum_ok)) {
@@ -262,6 +301,7 @@ static void verify_read_samples(uint32_t *samples, int sample_count)
                                 sector.data_checksum_ok ? "YES" : "NO",
                                 sector.header_checksum_ok ? "YES" : "NO");
         }
+#endif
 
         free(bitstream);
 }
