@@ -23,6 +23,7 @@ SRCS=src/main.c \
      src/read_track_timing.c \
      src/list.c \
      src/flux_data.c \
+     src/read_flux_simple.c \
      src/read_flux.c \
      src/read_flux_opts.c \
      src/write_flux.c \

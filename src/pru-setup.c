@@ -401,16 +401,19 @@ int pru_write_bit_timing(struct pru * pru, uint16_t *source,
                                 ? 0x1000 : sample_count * sizeof(*source);
 
                         if (copy_size <= 0) {
+                                /*
+                                -- not sure why PRU sends this request, but it does?
                                 fprintf(stderr,
                         "fatal -- pru request samples on empty buffer!\n"
                                 "Buffer: %d\n", copy_size);
+                                */
                                 continue;
                         }
 
                         memcpy(dest, source, copy_size);
                         source += copy_size/sizeof(*source);
                         sample_count -= copy_size/sizeof(*source);
-                        printf("Adding %d\n", copy_size);
+                        // printf("Adding %d\n", copy_size);
 
                         if (++mul & 0x1) {
                                 dest += 0x1000/sizeof(*dest);

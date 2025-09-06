@@ -1,6 +1,7 @@
 #ifndef PRU_SETUP_H
 #define PRU_SETUP_H
 
+#include <unistd.h>
 #include <stdint.h>
 
 //#define MFM_TRACK_LEN	 0x1900 //1080 //0x1900

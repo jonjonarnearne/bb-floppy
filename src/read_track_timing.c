@@ -582,7 +582,7 @@ int read_timing(int argc, char ** argv)
 	int sample_count, i;
         struct mfm_sector_header *header;
 
-        fprintf(stderr, "This command needs fixes - try read_flux or read_track_timing!");
+        fprintf(stderr, "This command needs fixes - try read_flux or read_track_timing!\n");
 
         header = malloc(11 * sizeof(*header));
         if (!header) {
@@ -590,28 +590,31 @@ int read_timing(int argc, char ** argv)
                 return 0;
         }
 
-#if 0
 	if (argc != 2) {
 		usage();
 		printf("You must give a filename to a timing file\n");
 		return -1;	
 	}
 
-	fp = fopen(argv[1], "w");
-#endif
+	FILE *fp = fopen(argv[1], "w");
+        if (!fp) {
+                fprintf(stderr, "Failed to open: %s for writing!\n", argv[1]);
+                free(header);
+                return EXIT_FAILURE;
+        }
 
         pru_start_motor(pru);
 	pru_reset_drive(pru);
         pru_set_head_dir(pru, PRU_HEAD_INC);
 
 	//for (i=0; i < 82 * 2; i++) {
-	for (i=0; i < 2 * 2; i++) {
+	for (i=0; i < 80 * 2; i++) {
 		if (i & 1)
 			pru_set_head_side(pru, PRU_HEAD_LOWER);
 		else
 			pru_set_head_side(pru, PRU_HEAD_UPPER);
 
-		printf("Read track %d: head: %d :: ", i >> 1, i & 1);
+		printf("Read track %d: head: %d\n", i >> 1, i & 1);
 		sample_count = pru_read_bit_timing(pru, &timing);
 		if (!sample_count) {
 			fprintf(stderr, "Got zero samples\n");
@@ -644,10 +647,10 @@ int read_timing(int argc, char ** argv)
 		}
 #endif
 
-#if 0
 		fwrite(&sample_count, sizeof(sample_count), 1, fp);
 		fwrite(timing, sizeof(*timing), sample_count, fp);
-#endif
+                fflush(fp);
+
                 parse_timing_data(timing, sample_count);
 
 		free(timing);
@@ -658,9 +661,8 @@ int read_timing(int argc, char ** argv)
         pru_stop_motor(pru);
 
 	free(header);
-#if 0
+
 	fclose(fp);
-#endif
 
         return 0;
 }
@@ -681,9 +683,10 @@ void parse_timing_data(const uint16_t *timing, int sample_count)
 
 int write_timing(int argc, char ** argv)
 {
-	FILE *fp;
-	int sample_count, c=0, d=0;
-	uint16_t *timing = malloc(45000 * sizeof(*timing));
+	int sample_count;
+        int c=0;
+        int d=0;
+	uint16_t *timing = malloc(60000 * sizeof(*timing));
 
 	if (!timing) {
 		printf("%s: fatal -- Couldn't allocate memory for buffer!\n",
@@ -701,7 +704,11 @@ int write_timing(int argc, char ** argv)
 	pru_reset_drive(pru);
         pru_set_head_dir(pru, PRU_HEAD_INC);
 
-	fp = fopen(argv[1], "r");
+	FILE *fp = fopen(argv[1], "r");
+        if (!fp) {
+                fprintf(stderr, "Failed to open: %s\n", argv[1]);
+                return EXIT_FAILURE;
+        }
 
         c = 0;
 	while(!feof(fp)) {
@@ -711,7 +718,14 @@ int write_timing(int argc, char ** argv)
                         pru_set_head_side(pru, PRU_HEAD_UPPER);
 
 		d = fread(&sample_count, sizeof(sample_count), 1, fp);
-		if (!d) continue;
+		if (!d) {
+                        continue;
+                }
+                printf("Reading %d samples from file\n", sample_count);
+                if (sample_count > 60000) {
+                        fprintf(stderr, "To many samples in track - increase buffer size!!\n");
+                        return EXIT_FAILURE;
+                }
 
 		fread(timing, sizeof(*timing), sample_count, fp);
 	        pru_write_bit_timing(pru, timing, sample_count);
